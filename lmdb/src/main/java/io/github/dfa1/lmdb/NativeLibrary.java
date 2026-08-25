@@ -108,8 +108,7 @@ final class NativeLibrary {
         if (os.contains("mac") || os.contains("darwin")) {
             osPart = "osx";
         } else if (os.contains("win")) {
-            throw new UnsatisfiedLinkError(
-                    "Windows is not yet supported by lmdb-java; only osx and linux natives are shipped");
+            osPart = "windows";
         } else {
             osPart = "linux";
         }

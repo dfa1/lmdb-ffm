@@ -46,6 +46,16 @@
 				<artifactId>lmdb-native-osx-x86_64</artifactId>
 				<version>${project.version}</version>
 			</dependency>
+			<dependency>
+				<groupId>io.github.dfa1.lmdb</groupId>
+				<artifactId>lmdb-native-windows-x86_64</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>io.github.dfa1.lmdb</groupId>
+				<artifactId>lmdb-native-windows-aarch64</artifactId>
+				<version>${project.version}</version>
+			</dependency>
 		</dependencies>
 	</dependencyManagement>
 </project>

@@ -9,9 +9,9 @@
 		<relativePath>../../pom.xml</relativePath>
 	</parent>
 
-	<artifactId>lmdb-native-osx-x86_64</artifactId>
-	<name>lmdb-native-osx-x86_64</name>
-	<description>Native LMDB library for macOS x86_64</description>
+	<artifactId>lmdb-native-windows-x86_64</artifactId>
+	<name>lmdb-native-windows-x86_64</name>
+	<description>Native LMDB library for Windows x86_64</description>
 	<packaging>jar</packaging>
 
 	<properties>
@@ -43,7 +43,7 @@
 							<arguments>
 								<argument>${maven.multiModuleProjectDirectory}/scripts/build-lmdb.sh</argument>
 								<argument>${project.basedir}/src/main/resources</argument>
-								<argument>osx-x86_64</argument>
+								<argument>windows-x86_64</argument>
 							</arguments>
 						</configuration>
 					</execution>

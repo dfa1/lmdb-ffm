@@ -24,6 +24,8 @@ class NativeLibraryTest {
             "Mac OS X,        aarch64, osx-aarch64",
             "Darwin,          arm64,   osx-aarch64",
             "Linux,           x86_64,  linux-x86_64",
+            "Windows 11,      amd64,   windows-x86_64",
+            "Windows 11,      aarch64, windows-aarch64",
             // unknown os falls back to linux; arch aliases normalize
             "FreeBSD,         aarch64, linux-aarch64",
             "Linux,           amd64,   linux-x86_64",
@@ -36,17 +38,6 @@ class NativeLibraryTest {
 
             // Then it names the matching platform's native jar
             assertThat(classifier).isEqualTo(expected);
-        }
-
-        @Test
-        void rejectsWindowsAsNotYetSupported() {
-            // Given lmdb-java ships no Windows native yet
-            ThrowingCallable result = () -> NativeLibrary.classifier("Windows 11", "amd64");
-
-            // Then it fails fast naming the reason, not a cryptic dlopen error
-            assertThatThrownBy(result)
-                    .isInstanceOf(UnsatisfiedLinkError.class)
-                    .hasMessageContaining("Windows");
         }
 
         @Test
@@ -99,6 +90,7 @@ class NativeLibraryTest {
             "osx-aarch64,     dylib",
             "osx-x86_64,      dylib",
             "windows-x86_64,  dll",
+            "windows-aarch64, dll",
             "linux-x86_64,    so",
             "linux-aarch64,   so",
         })

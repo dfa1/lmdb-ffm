@@ -39,6 +39,8 @@
 		<module>native/osx-x86_64</module>
 		<module>native/linux-x86_64</module>
 		<module>native/linux-aarch64</module>
+		<module>native/windows-x86_64</module>
+		<module>native/windows-aarch64</module>
 		<module>lmdb</module>
 		<module>lmdb-platform</module>
 		<module>bom</module>
@@ -89,6 +91,16 @@
 			<dependency>
 				<groupId>io.github.dfa1.lmdb</groupId>
 				<artifactId>lmdb-native-linux-aarch64</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>io.github.dfa1.lmdb</groupId>
+				<artifactId>lmdb-native-windows-x86_64</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>io.github.dfa1.lmdb</groupId>
+				<artifactId>lmdb-native-windows-aarch64</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>

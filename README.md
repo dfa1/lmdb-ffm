@@ -65,13 +65,11 @@ Run with `--enable-native-access=ALL-UNNAMED`.
 |---|---|---|
 | Linux | ✅ | ✅ |
 | macOS | ✅ | ✅ |
-| Windows | not yet | not yet |
+| Windows | ✅ | ✅ (cross-compiled; not yet run on real ARM64 Windows hardware) |
 
 Every native `liblmdb` is cross-compiled hermetically from the vendored
 `third_party/lmdb` submodule with **`zig cc`** — see [CLAUDE.md](CLAUDE.md)
-for the build. Windows needs its own porting pass (LMDB's locking strategy
-branches significantly on `_WIN32`) and is tracked as follow-up work, not a
-missing build target.
+for the build.
 
 ## Build from source
 

@@ -10,7 +10,7 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -32,4 +32,8 @@ jobs:
           version: 0.16.0
 
       - name: Build, test and verify
+        # Explicit bash: windows-latest's default run shell is PowerShell,
+        # which can't execute ./mvnw directly. Git Bash (bundled on every
+        # GitHub-hosted Windows runner) makes this step identical on all three OSes.
+        shell: bash
         run: ./mvnw -B -ntp verify

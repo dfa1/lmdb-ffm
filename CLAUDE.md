@@ -3,6 +3,14 @@
 Java **Foreign Function & Memory (FFM)** bindings for [LMDB](https://github.com/LMDB/lmdb).
 No JNI, no hand-written C. Targets **JDK 25+** (stable `java.lang.foreign`).
 
+C API reference: [lmdb.tech/doc/group__mdb.html](http://www.lmdb.tech/doc/group__mdb.html)
+— the authoritative doc for every `mdb_*` function/flag/struct this project
+binds (semantics, parameters, valid flag combinations, return codes). When
+adding or reviewing a binding, check the signature and behavior described
+there against `third_party/lmdb/libraries/liblmdb/lmdb.h` (the vendored
+source of truth for the exact signature at `LMDB_1.0.1`) — the two agree in
+practice, but the header is what the linked binary actually implements.
+
 The differentiator is the **zero-copy read path**: `mdb_get`/cursor reads hand
 back a `MemorySegment` that points directly into the memory-mapped database —
 no `byte[]` copy — valid for the lifetime of the enclosing read transaction.
@@ -14,10 +22,9 @@ Multi-module Maven build (`io.github.dfa1.lmdb:lmdb-java`):
 - `lmdb/` — the library module, artifactId `lmdb`, pure-Java FFM bindings
   (package `io.github.dfa1.lmdb`). The only module with Java sources.
 - `native/<classifier>/` — one module per platform; each packages a
-  `liblmdb.{dylib,so}` built from the `third_party/lmdb` submodule. No Java.
-  Classifiers so far: `osx-aarch64`, `osx-x86_64`, `linux-x86_64`,
-  `linux-aarch64`. Windows is not yet supported (LMDB's Windows locking path
-  needs its own porting pass — see the README).
+  `liblmdb.{dylib,so,dll}` built from the `third_party/lmdb` submodule. No
+  Java. Classifiers: `osx-aarch64`, `osx-x86_64`, `linux-x86_64`,
+  `linux-aarch64`, `windows-x86_64`, `windows-aarch64`.
 - `lmdb-platform/` — convenience jar pulling in the bindings plus every
   native classifier.
 - `bom/` — dependency BOM.
@@ -29,16 +36,24 @@ Multi-module Maven build (`io.github.dfa1.lmdb:lmdb-java`):
 `scripts/build-lmdb.sh <output-resources-dir> <classifier>` compiles LMDB's
 two source files (`mdb.c`, `midl.c`) directly with **`zig cc`** — no
 Makefile. Zig bundles clang + libc for every target, so any host
-cross-compiles any of the four classifiers hermetically. The Maven `exec`
+cross-compiles any of the six classifiers hermetically. The Maven `exec`
 plugin runs it in `generate-resources`; it is idempotent (skips if the
-library already exists).
+library already exists). `<executable>bash</executable>` in each native
+module's pom is deliberate: a `.sh` can't run via its shebang on Windows, but
+GitHub's `windows-latest` runners ship Git Bash on `PATH`.
 
-LMDB itself branches on `__APPLE__`/`__linux__`/etc. inside `mdb.c` for its
-locking strategy (POSIX mutexes + robust recovery on Linux, named POSIX
-semaphores on Darwin), so the build script does not need to pick that per
-platform — only `-pthread` and `-fvisibility=hidden` are set explicitly.
+LMDB itself branches on `__APPLE__`/`__linux__`/`_WIN32`/etc. inside `mdb.c`
+for its locking strategy (POSIX mutexes + robust recovery on Linux, named
+POSIX semaphores on Darwin, native `CreateMutex`/`LockFileEx` on Windows — no
+pthreads there at all), so the build script does not need to pick that per
+platform — it only conditions `-pthread` (POSIX targets only) and, for
+Windows, `-Wl,--export-all-symbols`: PE/COFF exports nothing by default
+(unlike ELF/Mach-O, which export every non-static global automatically), and
+`lmdb.h` has no `__declspec(dllexport)` annotation to opt in per-symbol, so
+lld is told to export everything instead. No `-fvisibility=hidden` on any
+platform — see the no-`ZSTDLIB_VISIBLE`-equivalent note in the script.
 
-Built `.dylib/.so` are git-ignored; they are regenerated from the submodule.
+Built `.dylib`/`.so`/`.dll` are git-ignored; they are regenerated from the submodule.
 
 ## Code conventions
 

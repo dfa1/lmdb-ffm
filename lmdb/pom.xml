@@ -88,5 +88,33 @@
 				</dependency>
 			</dependencies>
 		</profile>
+		<profile>
+			<id>native-windows-x86_64</id>
+			<activation>
+				<os><family>windows</family><arch>amd64</arch></os>
+			</activation>
+			<dependencies>
+				<dependency>
+					<groupId>io.github.dfa1.lmdb</groupId>
+					<artifactId>lmdb-native-windows-x86_64</artifactId>
+					<version>${project.version}</version>
+					<scope>test</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>native-windows-aarch64</id>
+			<activation>
+				<os><family>windows</family><arch>aarch64</arch></os>
+			</activation>
+			<dependencies>
+				<dependency>
+					<groupId>io.github.dfa1.lmdb</groupId>
+					<artifactId>lmdb-native-windows-aarch64</artifactId>
+					<version>${project.version}</version>
+					<scope>test</scope>
+				</dependency>
+			</dependencies>
+		</profile>
 	</profiles>
 </project>

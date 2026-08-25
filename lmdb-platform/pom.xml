@@ -17,12 +17,11 @@
 	     clients can add it like any normal artifact. -->
 	<packaging>jar</packaging>
 
-	<!-- One dependency pulls the bindings plus all native libraries currently
-	     shipped (osx/linux, x86_64/aarch64 — see CLAUDE.md for Windows status),
-	     so a build runs on any supported OS/arch without choosing a classifier.
-	     For a known single target depend on lmdb + the one
-	     lmdb-native-<classifier> directly. Versions come from the parent's
-	     dependencyManagement. -->
+	<!-- One dependency pulls the bindings plus every native library shipped
+	     (osx/linux/windows, x86_64/aarch64), so a build runs on any supported
+	     OS/arch without choosing a classifier. For a known single target
+	     depend on lmdb + the one lmdb-native-<classifier> directly. Versions
+	     come from the parent's dependencyManagement. -->
 	<dependencies>
 		<dependency>
 			<groupId>io.github.dfa1.lmdb</groupId>
@@ -46,6 +45,16 @@
 		<dependency>
 			<groupId>io.github.dfa1.lmdb</groupId>
 			<artifactId>lmdb-native-linux-aarch64</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.github.dfa1.lmdb</groupId>
+			<artifactId>lmdb-native-windows-x86_64</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.github.dfa1.lmdb</groupId>
+			<artifactId>lmdb-native-windows-aarch64</artifactId>
 			<scope>runtime</scope>
 		</dependency>
 	</dependencies>
