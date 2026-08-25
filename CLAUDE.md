@@ -72,13 +72,18 @@ Built `.dylib`/`.so`/`.dll` are git-ignored; they are regenerated from the submo
   named `StructLayout` and access fields through `static final VarHandle`s
   from it (`LAYOUT.varHandle(groupElement("…"))`), deriving size from
   `LAYOUT.byteSize()`. No hardcoded offsets/sizes.
-- Query-result structs (`LmdbStat`, `LmdbEnvInfo`) are plain classes with a
-  private constructor and a package-private `of(MemorySegment)` factory, not
-  public records: every instance is a snapshot read from a live native call,
-  and a public canonical constructor would let a caller fabricate one with
-  values LMDB never actually reported. `LmdbDbi` stays a record — it wraps a
-  caller-supplied `MDB_dbi` handle, not query output, so there is nothing to
-  protect by hiding its constructor.
+- Types whose only meaningful value comes from a native call (`LmdbStat`,
+  `LmdbEnvInfo`, `LmdbVersion`) are plain classes with a package-private
+  constructor, not public records: every instance is a snapshot LMDB itself
+  reported (`mdb_stat`/`mdb_env_info`/`mdb_version`), and a public canonical
+  constructor would let a caller fabricate one with values LMDB never
+  actually reported — e.g. a fake `LmdbVersion` feeding version-gated logic.
+  `LmdbStat`/`LmdbEnvInfo` parse a `MemorySegment` so their constructor is
+  `private` behind a package-private `of(MemorySegment)` factory;
+  `LmdbVersion` takes three already-parsed `int`s with no segment to parse,
+  so its constructor is package-private directly, no factory needed.
+  `LmdbDbi` stays a record — it wraps a caller-supplied `MDB_dbi` handle, not
+  query output, so there is nothing to protect by hiding its constructor.
 - API is **segment-first for the zero-copy read path, with thin `byte[]`
   overloads** for heap callers. `LmdbTxn#get` returns a `MemorySegment` backed
   directly by the mmap; never copy it to a `byte[]` unless the caller asked
