@@ -72,26 +72,28 @@ Built `.dylib`/`.so`/`.dll` are git-ignored; they are regenerated from the submo
   named `StructLayout` and access fields through `static final VarHandle`s
   from it (`LAYOUT.varHandle(groupElement("…"))`), deriving size from
   `LAYOUT.byteSize()`. No hardcoded offsets/sizes.
-- Types whose only meaningful value comes from a native call (`LmdbStat`,
-  `LmdbEnvInfo`, `LmdbVersion`) are plain classes with a package-private
-  constructor, not public records: every instance is a snapshot LMDB itself
-  reported (`mdb_stat`/`mdb_env_info`/`mdb_version`), and a public canonical
-  constructor would let a caller fabricate one with values LMDB never
-  actually reported — e.g. a fake `LmdbVersion` feeding version-gated logic.
-  `LmdbStat`/`LmdbEnvInfo` parse a `MemorySegment` so their constructor is
-  `private` behind a package-private `of(MemorySegment)` factory;
-  `LmdbVersion` takes three already-parsed `int`s with no segment to parse,
-  so its constructor is package-private directly, no factory needed.
-  `LmdbDbi` stays a record — it wraps a caller-supplied `MDB_dbi` handle, not
-  query output, so there is nothing to protect by hiding its constructor.
+- Types whose only valid values come from a native call (`LmdbStat`,
+  `LmdbEnvInfo`, `LmdbVersion`, `LmdbDbi`) are plain classes with a
+  package-private constructor, not public records: a public canonical
+  constructor would let a caller fabricate one LMDB never actually produced —
+  a fake `LmdbVersion` feeding version-gated logic, or worse, an `LmdbDbi`
+  wrapping a handle `mdb_dbi_open` never assigned, then passed to `mdb_get`/
+  `mdb_put` as if it were real. `LmdbStat`/`LmdbEnvInfo` parse a
+  `MemorySegment`, so their constructor is `private` behind a
+  package-private `of(MemorySegment)` factory; `LmdbVersion`/`LmdbDbi` take
+  already-parsed `int`s with no segment to parse, so their constructor is
+  package-private directly, no factory needed. Compare
+  [LmdbCursor.Entry], which stays a public record: it is only ever handed
+  *out* by [LmdbCursor#get(LmdbCursorOp)], never accepted as an input
+  parameter anywhere, so a fabricated one has nothing to corrupt.
 - API is **segment-first for the zero-copy read path, with thin `byte[]`
   overloads** for heap callers. `LmdbTxn#get` returns a `MemorySegment` backed
   directly by the mmap; never copy it to a `byte[]` unless the caller asked
   for the `byte[]` overload.
 - Run with `--enable-native-access=ALL-UNNAMED`.
-- `MDB_dbi` is a native `unsigned int` handle, not a pointer — `LmdbDbi` is a
-  plain `record LmdbDbi(int handle)`, not a `NativeObject`; it needs no close,
-  only `mdb_dbi_close` on the env (rarely used — see LMDB's own docs on why
+- `MDB_dbi` is a native `unsigned int` handle, not a pointer — `LmdbDbi` wraps
+  it directly (see above), not a `NativeObject`; it needs no close, only
+  `mdb_dbi_close` on the env (rarely used — see LMDB's own docs on why
   closing DBIs is discouraged in a multi-threaded environment).
 - Environment/database/write flags (`MDB_RDONLY`, `MDB_CREATE`, `MDB_NOOVERWRITE`,
   …) are OR-able bitmasks in C, but each *group* is still a closed set of named
