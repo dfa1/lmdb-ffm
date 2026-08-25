@@ -3,17 +3,16 @@ package io.github.dfa1.lmdb;
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
 import java.lang.invoke.VarHandle;
+import java.util.Objects;
 
 /// Statistics for a database (from `mdb_stat`) or the whole environment's
 /// main database (from `mdb_env_stat`) — LMDB's `MDB_stat` struct.
 ///
-/// @param pageSize       the size of a database page, in bytes (the same for every database)
-/// @param depth          the depth (height) of the B-tree
-/// @param branchPages    the number of internal (non-leaf) pages
-/// @param leafPages      the number of leaf pages
-/// @param overflowPages  the number of overflow pages
-/// @param entries        the number of data items
-public record LmdbStat(int pageSize, int depth, long branchPages, long leafPages, long overflowPages, long entries) {
+/// A plain class rather than a public record: every instance is a snapshot
+/// read from a live native call, and a public canonical constructor would let
+/// callers fabricate one with arbitrary values that were never actually
+/// reported by LMDB.
+public final class LmdbStat {
 
     private static final VarHandle PSIZE =
             Bindings.STAT_LAYOUT.varHandle(MemoryLayout.PathElement.groupElement("ms_psize"));
@@ -28,6 +27,22 @@ public record LmdbStat(int pageSize, int depth, long branchPages, long leafPages
     private static final VarHandle ENTRIES =
             Bindings.STAT_LAYOUT.varHandle(MemoryLayout.PathElement.groupElement("ms_entries"));
 
+    private final int pageSize;
+    private final int depth;
+    private final long branchPages;
+    private final long leafPages;
+    private final long overflowPages;
+    private final long entries;
+
+    private LmdbStat(int pageSize, int depth, long branchPages, long leafPages, long overflowPages, long entries) {
+        this.pageSize = pageSize;
+        this.depth = depth;
+        this.branchPages = branchPages;
+        this.leafPages = leafPages;
+        this.overflowPages = overflowPages;
+        this.entries = entries;
+    }
+
     static LmdbStat of(MemorySegment stat) {
         return new LmdbStat(
                 (int) PSIZE.get(stat, 0L),
@@ -36,5 +51,71 @@ public record LmdbStat(int pageSize, int depth, long branchPages, long leafPages
                 (long) LEAF_PAGES.get(stat, 0L),
                 (long) OVERFLOW_PAGES.get(stat, 0L),
                 (long) ENTRIES.get(stat, 0L));
+    }
+
+    /// The size of a database page, in bytes (the same for every database).
+    ///
+    /// @return the page size, in bytes
+    public int pageSize() {
+        return pageSize;
+    }
+
+    /// The depth (height) of the B-tree.
+    ///
+    /// @return the tree depth
+    public int depth() {
+        return depth;
+    }
+
+    /// The number of internal (non-leaf) pages.
+    ///
+    /// @return the branch page count
+    public long branchPages() {
+        return branchPages;
+    }
+
+    /// The number of leaf pages.
+    ///
+    /// @return the leaf page count
+    public long leafPages() {
+        return leafPages;
+    }
+
+    /// The number of overflow pages.
+    ///
+    /// @return the overflow page count
+    public long overflowPages() {
+        return overflowPages;
+    }
+
+    /// The number of data items.
+    ///
+    /// @return the entry count
+    public long entries() {
+        return entries;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (!(o instanceof LmdbStat other)) {
+            return false;
+        }
+        return pageSize == other.pageSize
+                && depth == other.depth
+                && branchPages == other.branchPages
+                && leafPages == other.leafPages
+                && overflowPages == other.overflowPages
+                && entries == other.entries;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(pageSize, depth, branchPages, leafPages, overflowPages, entries);
+    }
+
+    @Override
+    public String toString() {
+        return "LmdbStat[pageSize=" + pageSize + ", depth=" + depth + ", branchPages=" + branchPages
+                + ", leafPages=" + leafPages + ", overflowPages=" + overflowPages + ", entries=" + entries + "]";
     }
 }
