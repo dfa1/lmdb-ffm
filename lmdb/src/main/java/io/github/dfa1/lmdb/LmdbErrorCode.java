@@ -89,12 +89,13 @@ public enum LmdbErrorCode {
         this.value = value;
     }
 
-    /// The native code for this category, when it has exactly one.
-    ///
-    /// @return the LMDB error code value, `1` for [#SYSTEM_ERROR] (a
-    ///         placeholder — see [LmdbException#nativeCode()] for the real
-    ///         `errno`), or [Integer#MIN_VALUE] for [#UNKNOWN]
-    public int value() {
+    /// The native code for this category, when it has exactly one; `1` for
+    /// [#SYSTEM_ERROR] (a placeholder) or [Integer#MIN_VALUE] for [#UNKNOWN].
+    /// Not exposed publicly: callers branch on the category itself
+    /// (`code() == LmdbErrorCode.NOTFOUND`), and [LmdbException#nativeCode()]
+    /// is the public way to get the real raw code, including the actual
+    /// `errno` behind [#SYSTEM_ERROR] that this placeholder is not.
+    int value() {
         return value;
     }
 

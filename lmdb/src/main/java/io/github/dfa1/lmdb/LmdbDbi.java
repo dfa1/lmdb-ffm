@@ -13,7 +13,12 @@ import java.util.Objects;
 /// A plain class rather than a public record: a public canonical constructor
 /// would let a caller fabricate a handle LMDB never actually assigned (e.g.
 /// `new LmdbDbi(999)`) and pass it off as real, where LMDB's own C API can
-/// only ever hand one back from `mdb_dbi_open`.
+/// only ever hand one back from `mdb_dbi_open`. For the same reason the raw
+/// value is not exposed publicly either — callers only ever pass an
+/// `LmdbDbi` back into another API method, never need the `int` itself, and
+/// a public getter would let it leak into unrelated code (e.g. compared
+/// against, or reconstructed elsewhere) as if it still meant something once
+/// separated from this wrapper.
 public final class LmdbDbi {
 
     private final int handle;
@@ -23,9 +28,7 @@ public final class LmdbDbi {
     }
 
     /// The native `MDB_dbi` value.
-    ///
-    /// @return the native handle
-    public int handle() {
+    int handle() {
         return handle;
     }
 
