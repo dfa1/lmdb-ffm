@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>io.github.dfa1.lmdb</groupId>
+		<artifactId>lmdb-java</artifactId>
+		<version>0.1-SNAPSHOT</version>
+		<relativePath>../../pom.xml</relativePath>
+	</parent>
+
+	<artifactId>lmdb-native-linux-x86_64</artifactId>
+	<name>lmdb-native-linux-x86_64</name>
+	<description>Native LMDB library for Linux x86_64</description>
+	<packaging>jar</packaging>
+
+	<properties>
+		<!-- No Java to document or attach; the parent's maven-jar-plugin
+		     attaches empty javadoc/sources jars for Maven Central instead. -->
+		<maven.javadoc.skip>true</maven.javadoc.skip>
+		<maven.source.skip>true</maven.source.skip>
+	</properties>
+
+	<!-- No Java sources: this module only packages the native shared library. -->
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>exec-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>build-lmdb-native</id>
+						<phase>generate-resources</phase>
+						<goals>
+							<goal>exec</goal>
+						</goals>
+						<configuration>
+							<executable>bash</executable>
+							<arguments>
+								<argument>${maven.multiModuleProjectDirectory}/scripts/build-lmdb.sh</argument>
+								<argument>${project.basedir}/src/main/resources</argument>
+								<argument>linux-x86_64</argument>
+							</arguments>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jar-plugin</artifactId>
+			</plugin>
+		</plugins>
+	</build>
+</project>

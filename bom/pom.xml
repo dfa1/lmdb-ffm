@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>io.github.dfa1.lmdb</groupId>
+		<artifactId>lmdb-java</artifactId>
+		<version>0.1-SNAPSHOT</version>
+		<relativePath>../pom.xml</relativePath>
+	</parent>
+
+	<artifactId>lmdb-bom</artifactId>
+	<packaging>pom</packaging>
+	<name>lmdb-bom</name>
+	<description>Bill of materials for the lmdb-java modules</description>
+
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>io.github.dfa1.lmdb</groupId>
+				<artifactId>lmdb</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>io.github.dfa1.lmdb</groupId>
+				<artifactId>lmdb-platform</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>io.github.dfa1.lmdb</groupId>
+				<artifactId>lmdb-native-osx-aarch64</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>io.github.dfa1.lmdb</groupId>
+				<artifactId>lmdb-native-linux-x86_64</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>io.github.dfa1.lmdb</groupId>
+				<artifactId>lmdb-native-linux-aarch64</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>io.github.dfa1.lmdb</groupId>
+				<artifactId>lmdb-native-osx-x86_64</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+</project>

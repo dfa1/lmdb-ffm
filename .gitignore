@@ -1,0 +1,15 @@
+target/
+# built native libraries — regenerated from the lmdb submodule by build-lmdb.sh
+native/*/src/main/resources/native/
+*.dylib
+*.so
+*.o
+.idea/
+*.iml
+dependency-reduced-pom.xml
+
+private-key.asc
+*.asc
+
+hs_err_pid*.log
+replay_pid*.log
