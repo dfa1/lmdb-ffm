@@ -4,22 +4,23 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.Set;
 
 /// A database environment — wraps `MDB_env*`. An environment supports
 /// multiple databases, all residing in the same shared memory map at one
 /// filesystem path.
 ///
 /// Configuration ([#mapSize(long)], [#maxDatabases(int)], [#maxReaders(int)])
-/// must happen before [#open(Path, int, int)]; LMDB rejects changing them on
+/// must happen before [#open(Path, Set, int)]; LMDB rejects changing them on
 /// an open environment. Not thread-safe to configure or open concurrently,
 /// but the resulting environment (via its transactions) is safe to share
 /// across threads.
 ///
 /// {@snippet :
-/// try (LmdbEnv env = LmdbEnv.create().mapSize(10L << 20).open(dbPath, LmdbEnvFlags.NOSUBDIR)) {
+/// try (LmdbEnv env = LmdbEnv.create().mapSize(10L << 20).open(dbPath, EnumSet.of(LmdbEnvFlag.NOSUBDIR))) {
 ///     try (LmdbTxn txn = env.beginTxn()) {
-///         LmdbDbi dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
-///         txn.put(dbi, "key".getBytes(UTF_8), "value".getBytes(UTF_8), 0);
+///         LmdbDbi dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+///         txn.put(dbi, "key".getBytes(UTF_8), "value".getBytes(UTF_8), Set.of());
 ///         txn.commit();
 ///     }
 /// }
@@ -35,7 +36,7 @@ public final class LmdbEnv extends NativeObject {
     }
 
     /// Creates a new environment handle. It must still be configured and
-    /// [#open(Path, int, int)]ed before use.
+    /// [#open(Path, Set, int)]ed before use.
     ///
     /// @return the new, unopened environment
     /// @throws LmdbException if the native call fails
@@ -85,28 +86,31 @@ public final class LmdbEnv extends NativeObject {
     /// `rw-r--r--` if it does not already exist.
     ///
     /// @param path  the filesystem path (a directory unless
-    ///              [LmdbEnvFlags#NOSUBDIR] is set, in which case it names the
+    ///              [LmdbEnvFlag#NOSUBDIR] is set, in which case it names the
     ///              data file directly)
-    /// @param flags OR of [LmdbEnvFlags] bits, or `0`
+    /// @param flags the flags to open with, e.g. `EnumSet.of(LmdbEnvFlag.NOSUBDIR)`
+    ///              (`Set.of()` or `EnumSet.noneOf(LmdbEnvFlag.class)` for none)
     /// @return `this`, for chaining
     /// @throws LmdbException if the open fails
-    public LmdbEnv open(Path path, int flags) {
+    public LmdbEnv open(Path path, Set<LmdbEnvFlag> flags) {
         return open(path, flags, DEFAULT_MODE);
     }
 
-    /// Like [#open(Path, int)], with an explicit Unix file mode for a newly
+    /// Like [#open(Path, Set)], with an explicit Unix file mode for a newly
     /// created data/lock file (ignored on platforms with no concept of one).
     ///
     /// @param path  the filesystem path
-    /// @param flags OR of [LmdbEnvFlags] bits, or `0`
+    /// @param flags the flags to open with, e.g. `EnumSet.of(LmdbEnvFlag.NOSUBDIR)`
     /// @param mode  the Unix file mode for a newly created file
     /// @return `this`, for chaining
     /// @throws LmdbException if the open fails
-    public LmdbEnv open(Path path, int flags, int mode) {
+    public LmdbEnv open(Path path, Set<LmdbEnvFlag> flags, int mode) {
         Objects.requireNonNull(path, "path");
+        Objects.requireNonNull(flags, "flags");
+        int bits = LmdbFlag.toBits(flags);
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment pathPtr = arena.allocateFrom(path.toString());
-            NativeCall.check(() -> (int) Bindings.ENV_OPEN.invokeExact(ptr(), pathPtr, flags, mode));
+            NativeCall.check(() -> (int) Bindings.ENV_OPEN.invokeExact(ptr(), pathPtr, bits, mode));
         }
         return this;
     }
@@ -125,10 +129,10 @@ public final class LmdbEnv extends NativeObject {
     }
 
     /// Flushes buffered data to disk. A no-op if the environment is read-only
-    /// or if [LmdbEnvFlags#NOSYNC]/[LmdbEnvFlags#MAPASYNC] don't apply and
+    /// or if [LmdbEnvFlag#NOSYNC]/[LmdbEnvFlag#MAPASYNC] don't apply and
     /// every commit already synced.
     ///
-    /// @param force flush unconditionally, even without [LmdbEnvFlags#NOSYNC]/[LmdbEnvFlags#MAPASYNC]
+    /// @param force flush unconditionally, even without [LmdbEnvFlag#NOSYNC]/[LmdbEnvFlag#MAPASYNC]
     /// @throws LmdbException if the sync fails
     public void sync(boolean force) {
         NativeCall.check(() -> (int) Bindings.ENV_SYNC.invokeExact(ptr(), force ? 1 : 0));
@@ -164,17 +168,19 @@ public final class LmdbEnv extends NativeObject {
     /// @return the new transaction
     /// @throws LmdbException if the native call fails
     public LmdbTxn beginTxn() {
-        return beginTxn(0);
+        return beginTxn(Set.of());
     }
 
     /// Begins a new transaction with no parent.
     ///
-    /// @param flags OR of [LmdbEnvFlags] bits — only [LmdbEnvFlags#RDONLY] is
-    ///              meaningful here, for a read-only transaction
+    /// @param flags flags for the new transaction — only [LmdbEnvFlag#RDONLY]
+    ///              is meaningful here, for a read-only transaction (`Set.of()`
+    ///              for a read-write one)
     /// @return the new transaction
     /// @throws LmdbException if the native call fails
-    public LmdbTxn beginTxn(int flags) {
-        return LmdbTxn.begin(this, null, flags);
+    public LmdbTxn beginTxn(Set<LmdbEnvFlag> flags) {
+        Objects.requireNonNull(flags, "flags");
+        return LmdbTxn.begin(this, null, LmdbFlag.toBits(flags));
     }
 
     /// Begins a new transaction nested inside `parent`. `parent` may have no
@@ -182,12 +188,13 @@ public final class LmdbEnv extends NativeObject {
     /// commits or aborts.
     ///
     /// @param parent the parent transaction
-    /// @param flags  OR of [LmdbEnvFlags] bits
+    /// @param flags  flags for the new transaction
     /// @return the new nested transaction
     /// @throws LmdbException if the native call fails
-    public LmdbTxn beginTxn(LmdbTxn parent, int flags) {
+    public LmdbTxn beginTxn(LmdbTxn parent, Set<LmdbEnvFlag> flags) {
         Objects.requireNonNull(parent, "parent");
-        return LmdbTxn.begin(this, parent, flags);
+        Objects.requireNonNull(flags, "flags");
+        return LmdbTxn.begin(this, parent, LmdbFlag.toBits(flags));
     }
 
     /// Closes `dbi`'s handle in this environment. LMDB itself discourages

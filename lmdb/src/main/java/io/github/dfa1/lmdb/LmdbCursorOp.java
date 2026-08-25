@@ -2,7 +2,7 @@ package io.github.dfa1.lmdb;
 
 /// Positioning operation for [LmdbCursor#get(LmdbCursorOp)] and its key/data
 /// overloads — the native `MDB_cursor_op` enum from `lmdb.h`. Unlike the
-/// OR-able flag groups ([LmdbEnvFlags], [LmdbDbiFlags], [LmdbWriteFlags]),
+/// OR-able flag groups ([LmdbEnvFlag], [LmdbDbiFlag], [LmdbWriteFlag]),
 /// exactly one of these applies per call, so this is a real enum.
 public enum LmdbCursorOp {
 

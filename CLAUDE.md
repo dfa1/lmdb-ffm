@@ -82,10 +82,17 @@ Built `.dylib`/`.so`/`.dll` are git-ignored; they are regenerated from the submo
   only `mdb_dbi_close` on the env (rarely used — see LMDB's own docs on why
   closing DBIs is discouraged in a multi-threaded environment).
 - Environment/database/write flags (`MDB_RDONLY`, `MDB_CREATE`, `MDB_NOOVERWRITE`,
-  …) are OR-able bitmasks, not a single validated enum — kept as named `int`
-  constants (`LmdbEnvFlags`, `LmdbDbiFlags`, `LmdbWriteFlags`), mirroring the
-  C API. `MDB_cursor_op` is a closed, non-combinable set and is a real Java
-  enum (`LmdbCursorOp`).
+  …) are OR-able bitmasks in C, but each *group* is still a closed set of named
+  values, so each is a real Java `enum` (`LmdbEnvFlag`, `LmdbDbiFlag`,
+  `LmdbWriteFlag`) implementing the package-private `LmdbFlag` marker
+  interface (`int bits()`), combined by the caller with `EnumSet.of(...)`
+  (`Set.of()`/`EnumSet.noneOf(X.class)` for none) and folded back to the
+  native bitmask once, at the FFI boundary, via `LmdbFlag.toBits(Set)`. This
+  beats plain `int` constants: the compiler rejects passing an `LmdbDbiFlag`
+  where an `LmdbEnvFlag` is expected, and `EnumSet` renders/iterates as a real
+  collection instead of an opaque bit pattern. `MDB_cursor_op` is a single
+  non-combinable choice per call and is a plain enum, not an `LmdbFlag`
+  (`LmdbCursorOp`).
 
 ## Testing
 

@@ -4,6 +4,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /// A transaction — wraps `MDB_txn*`. All reads and writes go through one.
 ///
@@ -16,11 +17,11 @@ import java.util.Optional;
 /// snapshot; a write transaction must be [#commit()]ted to keep its changes.
 ///
 /// Not thread-safe, and (per LMDB) confined to the thread that began it unless
-/// the environment was opened with [LmdbEnvFlags#NOTLS].
+/// the environment was opened with [LmdbEnvFlag#NOTLS].
 ///
 /// {@snippet :
 /// try (LmdbTxn txn = env.beginTxn()) {
-///     txn.put(dbi, "key".getBytes(UTF_8), "value".getBytes(UTF_8), 0);
+///     txn.put(dbi, "key".getBytes(UTF_8), "value".getBytes(UTF_8), Set.of());
 ///     txn.commit();
 /// }
 /// }
@@ -74,11 +75,12 @@ public final class LmdbTxn extends NativeObject {
 
     /// Opens the environment's unnamed database.
     ///
-    /// @param flags OR of [LmdbDbiFlags] bits (e.g. `0` to open an existing
-    ///              database, or [LmdbDbiFlags#CREATE] to create it if missing)
+    /// @param flags the flags to open with (e.g. `Set.of()` to open an
+    ///              existing database, or `EnumSet.of(LmdbDbiFlag.CREATE)`
+    ///              to create it if missing)
     /// @return the database handle
     /// @throws LmdbException if the open fails
-    public LmdbDbi openDatabase(int flags) {
+    public LmdbDbi openDatabase(Set<LmdbDbiFlag> flags) {
         return openDatabase(null, flags);
     }
 
@@ -86,14 +88,16 @@ public final class LmdbTxn extends NativeObject {
     /// have been configured with a large enough [LmdbEnv#maxDatabases(int)]).
     ///
     /// @param name  the database name, or `null` for the unnamed database
-    /// @param flags OR of [LmdbDbiFlags] bits
+    /// @param flags the flags to open with
     /// @return the database handle
     /// @throws LmdbException if the open fails
-    public LmdbDbi openDatabase(String name, int flags) {
+    public LmdbDbi openDatabase(String name, Set<LmdbDbiFlag> flags) {
+        Objects.requireNonNull(flags, "flags");
+        int bits = LmdbFlag.toBits(flags);
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment namePtr = name == null ? MemorySegment.NULL : arena.allocateFrom(name);
             int dbi = NativeCall.createIntHandle(arena,
-                    out -> (int) Bindings.DBI_OPEN.invokeExact(ptr(), namePtr, flags, out));
+                    out -> (int) Bindings.DBI_OPEN.invokeExact(ptr(), namePtr, bits, out));
             return new LmdbDbi(dbi);
         }
     }
@@ -168,17 +172,20 @@ public final class LmdbTxn extends NativeObject {
     /// @param dbi   the database to write to
     /// @param key   the key to store
     /// @param data  the data to store
-    /// @param flags OR of [LmdbWriteFlags] bits, or `0`
+    /// @param flags the flags to write with, e.g. `Set.of()` or
+    ///              `EnumSet.of(LmdbWriteFlag.NOOVERWRITE)`
     /// @throws LmdbException if the write fails (e.g. [LmdbErrorCode#KEY_EXIST]
-    ///                       with [LmdbWriteFlags#NOOVERWRITE])
-    public void put(LmdbDbi dbi, byte[] key, byte[] data, int flags) {
+    ///                       with [LmdbWriteFlag#NOOVERWRITE])
+    public void put(LmdbDbi dbi, byte[] key, byte[] data, Set<LmdbWriteFlag> flags) {
         Objects.requireNonNull(dbi, "dbi");
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(data, "data");
+        Objects.requireNonNull(flags, "flags");
+        int bits = LmdbFlag.toBits(flags);
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.of(arena, data);
-            NativeCall.check(() -> (int) Bindings.PUT.invokeExact(ptr(), dbi.handle(), keyVal, dataVal, flags));
+            NativeCall.check(() -> (int) Bindings.PUT.invokeExact(ptr(), dbi.handle(), keyVal, dataVal, bits));
         }
     }
 

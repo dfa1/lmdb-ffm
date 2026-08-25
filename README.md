@@ -23,21 +23,23 @@ and cursors — enough to build on, not (yet) LMDB's full surface. See
 ```java
 import io.github.dfa1.lmdb.*;
 import java.nio.file.Path;
+import java.util.EnumSet;
+import java.util.Set;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 try (LmdbEnv env = LmdbEnv.create()
         .mapSize(10L << 20)
-        .open(Path.of("/tmp/mydb"), LmdbEnvFlags.NOSUBDIR)) {
+        .open(Path.of("/tmp/mydb"), EnumSet.of(LmdbEnvFlag.NOSUBDIR))) {
 
     LmdbDbi dbi;
     try (LmdbTxn txn = env.beginTxn()) {
-        dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
-        txn.put(dbi, "key".getBytes(UTF_8), "value".getBytes(UTF_8), 0);
+        dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+        txn.put(dbi, "key".getBytes(UTF_8), "value".getBytes(UTF_8), Set.of());
         txn.commit();
     }
 
-    try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY)) {
+    try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
         txn.get(dbi, "key".getBytes(UTF_8))
                 .map(bytes -> new String(bytes, UTF_8))
                 .ifPresent(System.out::println); // "value"
@@ -45,10 +47,14 @@ try (LmdbEnv env = LmdbEnv.create()
 }
 ```
 
+Flags are `enum`s combined with `EnumSet` (`Set.of()` for none) rather than
+OR'd `int` constants — no risk of passing a `LmdbDbiFlag` where an
+`LmdbEnvFlag` is expected.
+
 Zero-copy read, cursor iteration:
 
 ```java
-try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY);
+try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
      LmdbCursor cursor = txn.openCursor(dbi)) {
     for (var e = cursor.get(LmdbCursorOp.FIRST); e.isPresent(); e = cursor.get(LmdbCursorOp.NEXT)) {
         MemorySegment key = e.get().key();   // points straight into the mmap, no copy

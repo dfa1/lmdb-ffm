@@ -4,6 +4,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
@@ -19,7 +20,7 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 /// and its cursor in one `try`. Not thread-safe.
 ///
 /// {@snippet :
-/// try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY);
+/// try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
 ///      LmdbCursor cursor = txn.openCursor(dbi)) {
 ///     for (Optional<LmdbCursor.Entry> e = cursor.get(LmdbCursorOp.FIRST);
 ///             e.isPresent();
@@ -90,20 +91,22 @@ public final class LmdbCursor extends NativeObject {
     }
 
     /// Stores `data` under `key` at this cursor's current database, per `flags`
-    /// (e.g. [LmdbWriteFlags#CURRENT] to overwrite the entry at the cursor's
-    /// current position).
+    /// (e.g. `EnumSet.of(LmdbWriteFlag.CURRENT)` to overwrite the entry at the
+    /// cursor's current position).
     ///
     /// @param key   the key to store
     /// @param data  the data to store
-    /// @param flags OR of [LmdbWriteFlags] bits, or `0`
+    /// @param flags the flags to write with, e.g. `Set.of()` for none
     /// @throws LmdbException if the write fails
-    public void put(byte[] key, byte[] data, int flags) {
+    public void put(byte[] key, byte[] data, Set<LmdbWriteFlag> flags) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(data, "data");
+        Objects.requireNonNull(flags, "flags");
+        int bits = LmdbFlag.toBits(flags);
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.of(arena, data);
-            NativeCall.check(() -> (int) Bindings.CURSOR_PUT.invokeExact(ptr(), keyVal, dataVal, flags));
+            NativeCall.check(() -> (int) Bindings.CURSOR_PUT.invokeExact(ptr(), keyVal, dataVal, bits));
         }
     }
 

@@ -10,7 +10,9 @@ import org.junit.jupiter.api.io.TempDir;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.EnumSet;
 import java.util.Optional;
+import java.util.Set;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,7 +25,7 @@ class LmdbTxnTest {
 
     @BeforeEach
     void openEnvironment(@TempDir Path dir) {
-        env = LmdbEnv.create().mapSize(10L << 20).maxDatabases(4).open(dir, 0);
+        env = LmdbEnv.create().mapSize(10L << 20).maxDatabases(4).open(dir, Set.of());
     }
 
     @AfterEach
@@ -39,13 +41,13 @@ class LmdbTxnTest {
             // Given a value put and committed
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
-                txn.put(dbi, key("k"), value("v"), 0);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
                 txn.commit();
             }
 
             // When read back in a fresh transaction
-            try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY)) {
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                 Optional<byte[]> result = txn.get(dbi, key("k"));
 
                 // Then it returns the same bytes
@@ -58,13 +60,13 @@ class LmdbTxnTest {
             // Given a value put and committed
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
-                txn.put(dbi, key("k"), value("v"), 0);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
                 txn.commit();
             }
 
             // When read back as a native segment
-            try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY)) {
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                 Optional<MemorySegment> result = txn.getSegment(dbi, key("k"));
 
                 // Then it is a native segment with the same content
@@ -80,12 +82,12 @@ class LmdbTxnTest {
             // Given an empty database
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
                 txn.commit();
             }
 
             // When a nonexistent key is read
-            try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY)) {
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                 Optional<byte[]> result = txn.get(dbi, key("missing"));
 
                 // Then it is empty, not a thrown exception
@@ -98,8 +100,8 @@ class LmdbTxnTest {
             // Given an existing key
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
-                txn.put(dbi, key("k"), value("v"), 0);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
                 txn.commit();
             }
 
@@ -112,7 +114,7 @@ class LmdbTxnTest {
             }
 
             // Then it is gone
-            try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY)) {
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                 assertThat(txn.get(dbi, key("k"))).isEmpty();
             }
         }
@@ -122,7 +124,7 @@ class LmdbTxnTest {
             // Given an empty database
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
                 txn.commit();
             }
 
@@ -141,14 +143,14 @@ class LmdbTxnTest {
             // Given an existing key
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
-                txn.put(dbi, key("k"), value("v"), 0);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
                 txn.commit();
             }
 
             // When put again with NOOVERWRITE
             try (LmdbTxn txn = env.beginTxn()) {
-                ThrowingCallable result = () -> txn.put(dbi, key("k"), value("v2"), LmdbWriteFlags.NOOVERWRITE);
+                ThrowingCallable result = () -> txn.put(dbi, key("k"), value("v2"), EnumSet.of(LmdbWriteFlag.NOOVERWRITE));
 
                 // Then it fails with the named KEY_EXIST category
                 assertThatThrownBy(result)
@@ -167,16 +169,16 @@ class LmdbTxnTest {
             // Given a write that is aborted, not committed
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
                 txn.commit();
             }
             try (LmdbTxn txn = env.beginTxn()) {
-                txn.put(dbi, key("k"), value("v"), 0);
+                txn.put(dbi, key("k"), value("v"), Set.of());
                 txn.abort();
             }
 
             // Then a later transaction sees nothing
-            try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY)) {
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                 assertThat(txn.get(dbi, key("k"))).isEmpty();
             }
         }
@@ -186,16 +188,16 @@ class LmdbTxnTest {
             // Given a write transaction whose block ends without an explicit commit
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
                 txn.commit();
             }
             try (LmdbTxn txn = env.beginTxn()) {
-                txn.put(dbi, key("k"), value("v"), 0);
+                txn.put(dbi, key("k"), value("v"), Set.of());
                 // no commit() — close() below must abort, not leak a dangling write
             }
 
             // Then the write never happened
-            try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY)) {
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                 assertThat(txn.get(dbi, key("k"))).isEmpty();
             }
         }

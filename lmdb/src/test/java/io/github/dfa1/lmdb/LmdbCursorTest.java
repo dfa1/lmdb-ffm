@@ -10,8 +10,10 @@ import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -22,7 +24,7 @@ class LmdbCursorTest {
 
     @BeforeEach
     void openEnvironment(@TempDir Path dir) {
-        env = LmdbEnv.create().mapSize(10L << 20).maxDatabases(4).open(dir, 0);
+        env = LmdbEnv.create().mapSize(10L << 20).maxDatabases(4).open(dir, Set.of());
     }
 
     @AfterEach
@@ -38,16 +40,16 @@ class LmdbCursorTest {
             // Given three keys inserted out of order
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
-                txn.put(dbi, bytes("b"), bytes("2"), 0);
-                txn.put(dbi, bytes("a"), bytes("1"), 0);
-                txn.put(dbi, bytes("c"), bytes("3"), 0);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, bytes("b"), bytes("2"), Set.of());
+                txn.put(dbi, bytes("a"), bytes("1"), Set.of());
+                txn.put(dbi, bytes("c"), bytes("3"), Set.of());
                 txn.commit();
             }
 
             // When walked from FIRST via NEXT
             List<String> keys = new ArrayList<>();
-            try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY);
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
                     LmdbCursor cursor = txn.openCursor(dbi)) {
                 for (Optional<LmdbCursor.Entry> e = cursor.get(LmdbCursorOp.FIRST);
                         e.isPresent();
@@ -65,12 +67,12 @@ class LmdbCursorTest {
             // Given an empty database
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
                 txn.commit();
             }
 
             // When positioned at FIRST
-            try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY);
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
                     LmdbCursor cursor = txn.openCursor(dbi)) {
                 Optional<LmdbCursor.Entry> result = cursor.get(LmdbCursorOp.FIRST);
 
@@ -84,14 +86,14 @@ class LmdbCursorTest {
             // Given keys "a" and "c" (no "b")
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
-                txn.put(dbi, bytes("a"), bytes("1"), 0);
-                txn.put(dbi, bytes("c"), bytes("3"), 0);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, bytes("a"), bytes("1"), Set.of());
+                txn.put(dbi, bytes("c"), bytes("3"), Set.of());
                 txn.commit();
             }
 
             // When positioned with SET_RANGE at "b"
-            try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY);
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
                     LmdbCursor cursor = txn.openCursor(dbi)) {
                 Optional<LmdbCursor.Entry> result = cursor.get(LmdbCursorOp.SET_RANGE, bytes("b"));
 
@@ -110,7 +112,7 @@ class LmdbCursorTest {
             // Given a database and an open write cursor
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
                 txn.commit();
             }
 
@@ -120,7 +122,7 @@ class LmdbCursorTest {
             try (LmdbTxn txn = env.beginTxn()) {
                 try (LmdbCursor cursor = txn.openCursor(dbi)) {
                     // When an entry is put via the cursor, then deleted at its position
-                    cursor.put(bytes("k"), bytes("v"), 0);
+                    cursor.put(bytes("k"), bytes("v"), Set.of());
                     assertThat(cursor.get(LmdbCursorOp.SET, bytes("k"))).isPresent();
 
                     cursor.delete();
@@ -129,7 +131,7 @@ class LmdbCursorTest {
             }
 
             // Then it is gone
-            try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY)) {
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                 assertThat(txn.get(dbi, bytes("k"))).isEmpty();
             }
         }
@@ -141,14 +143,14 @@ class LmdbCursorTest {
             // databases reject it with MDB_INCOMPATIBLE, one key/data pair each)
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
-                dbi = txn.openDatabase(LmdbDbiFlags.CREATE | LmdbDbiFlags.DUPSORT);
-                txn.put(dbi, bytes("k"), bytes("v1"), 0);
-                txn.put(dbi, bytes("k"), bytes("v2"), 0);
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.put(dbi, bytes("k"), bytes("v1"), Set.of());
+                txn.put(dbi, bytes("k"), bytes("v2"), Set.of());
                 txn.commit();
             }
 
             // When positioned on the key and counted
-            try (LmdbTxn txn = env.beginTxn(LmdbEnvFlags.RDONLY);
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
                     LmdbCursor cursor = txn.openCursor(dbi)) {
                 cursor.get(LmdbCursorOp.SET, bytes("k"));
 
