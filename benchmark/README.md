@@ -80,3 +80,48 @@ GetBenchmark.lmdbjava                 1000  thrpt    3   ...    ops/us
 
 Microbenchmark numbers are machine-specific; rebuild and run on the target
 host. Heed JMH's own caveat printed after each run.
+
+## Results
+
+Apple M5 (`osx-aarch64`), JDK 25.0.2, `-f 1 -wi 2 -i 5` (5 measurement
+iterations, 10 s each). lmdbjava does bundle a native for `osx-aarch64` (see
+above), so this is a real head-to-head, not a fallback comparison.
+
+#### CursorScanBenchmark (ops/ms, higher is better)
+
+| entries | lmdb-java `lmdbJavaCursor` | lmdbjava |
+|---|---:|---:|
+| 1,000 | **77.676 ± 2.652** | 52.142 ± 1.240 |
+| 100,000 | **0.763 ± 0.013** | 0.560 ± 0.007 |
+
+lmdb-java is ~35–49% faster. This is the suite that originally caught a real
+bug — `LmdbCursor#get(LmdbCursorOp)` was allocating a fresh `Arena` and two
+`MDB_val` structs on every call, ~300x slower than lmdbjava before the fix
+(see the git history for `LmdbCursor.java`). These numbers are post-fix.
+
+#### GetBenchmark (ops/µs, higher is better)
+
+| entries | `lmdbJavaBytes` | `lmdbJavaMapper` | `lmdbJavaSegment` | lmdbjava |
+|---|---:|---:|---:|---:|
+| 1,000 | 6.285 ± 0.278 | **7.169 ± 0.061** | 6.335 ± 0.059 | 6.233 ± 0.012 |
+| 100,000 | **4.773 ± 0.077** | 4.786 ± 0.017 | 4.310 ± 0.033 | 4.134 ± 0.043 |
+
+All three lmdb-java paths match or edge out lmdbjava; the zero-copy `Mapper`
+path is the standout at small scale, with no `byte[]`/`MemorySegment` left
+over to manage.
+
+#### PutBenchmark (ops/µs of 100-put batches, higher is better)
+
+| `lmdbJavaBytes` | `lmdbJavaSegment` | lmdbjava |
+|---:|---:|---:|
+| 0.032 ± 0.002 | **0.034 ± 0.001** | 0.029 ± 0.001 |
+
+lmdb-java is ~10–17% faster.
+
+Regenerate with:
+
+```bash
+java -jar benchmark/target/benchmarks.jar '\.GetBenchmark\.' '\.PutBenchmark\.' '\.CursorScanBenchmark\.' \
+    -f 1 -wi 2 -i 5 -rf json -rff results.json
+python3 .github/scripts/format-results.py results.json
+```
