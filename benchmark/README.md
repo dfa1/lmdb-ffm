@@ -1,10 +1,10 @@
-# lmdb-java benchmarks
+# lmdb-ffm benchmarks
 
-JMH microbenchmarks comparing **lmdb-java** against the established JVM LMDB binding:
+JMH microbenchmarks comparing **lmdb-ffm** against the established JVM LMDB binding:
 
 | Contestant | Binding | Modes benchmarked |
 |------------|---------|-------------------|
-| **lmdb-java** (this project) | FFM (no JNI) | `byte[]`, zero-copy `MemorySegment`, and `Mapper` |
+| **lmdb-ffm** (this project) | FFM (no JNI) | `byte[]`, zero-copy `MemorySegment`, and `Mapper` |
 | **lmdbjava** (`org.lmdbjava:lmdbjava`) | JNR-FFI | direct `ByteBuffer` |
 
 Both bindings wrap the same LMDB C library and operate on identically-shaped

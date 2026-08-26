@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Format one JMH JSON result file into a per-class contestants table.
 
-Used by benchmark.yml to report lmdb-java (byte[], MemorySegment, Mapper)
+Used by benchmark.yml to report lmdb-ffm (byte[], MemorySegment, Mapper)
 against lmdbjava on the same run. Unlike zstd-java's equivalent script, the
 contestant method names differ per benchmark class (ReadBenchmark,
 WriteBenchmark), so columns are discovered from the results rather than

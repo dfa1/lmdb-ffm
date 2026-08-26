@@ -3,13 +3,13 @@
 	<modelVersion>4.0.0</modelVersion>
 
 	<groupId>io.github.dfa1.lmdb</groupId>
-	<artifactId>lmdb-java</artifactId>
+	<artifactId>lmdb-ffm</artifactId>
 	<version>0.1-SNAPSHOT</version>
 	<packaging>pom</packaging>
 
-	<name>lmdb-java</name>
+	<name>lmdb-ffm</name>
 	<description>Java FFM (Foreign Function &amp; Memory) bindings for LMDB</description>
-	<url>https://github.com/dfa1/lmdb-java</url>
+	<url>https://github.com/dfa1/lmdb-ffm</url>
 
 	<licenses>
 		<license>
@@ -28,9 +28,9 @@
 	</developers>
 
 	<scm>
-		<connection>scm:git:https://github.com/dfa1/lmdb-java.git</connection>
-		<developerConnection>scm:git:git@github.com:dfa1/lmdb-java.git</developerConnection>
-		<url>https://github.com/dfa1/lmdb-java</url>
+		<connection>scm:git:https://github.com/dfa1/lmdb-ffm.git</connection>
+		<developerConnection>scm:git:git@github.com:dfa1/lmdb-ffm.git</developerConnection>
+		<url>https://github.com/dfa1/lmdb-ffm</url>
 		<tag>HEAD</tag>
 	</scm>
 

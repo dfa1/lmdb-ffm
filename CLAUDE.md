@@ -1,4 +1,4 @@
-# lmdb-java
+# lmdb-ffm
 
 Java **Foreign Function & Memory (FFM)** bindings for [LMDB](https://github.com/LMDB/lmdb).
 No JNI, no hand-written C. Targets **JDK 25+** (stable `java.lang.foreign`).
@@ -21,7 +21,7 @@ just needs parsing into a plain result, not a `MemorySegment` to manage.
 
 ## Layout
 
-Multi-module Maven build (`io.github.dfa1.lmdb:lmdb-java`):
+Multi-module Maven build (`io.github.dfa1.lmdb:lmdb-ffm`):
 
 - `lmdb/` — the library module, artifactId `lmdb`, pure-Java FFM bindings
   (package `io.github.dfa1.lmdb`). The only module with Java sources.

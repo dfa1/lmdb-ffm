@@ -126,7 +126,7 @@ public class ReadBenchmark {
             MemorySegment.copy(keys[i], 0, keySegments[i], JAVA_BYTE, 0, keys[i].length);
         }
 
-        lmdbJavaDir = BenchSupport.tempDir("lmdb-java-read");
+        lmdbJavaDir = BenchSupport.tempDir("lmdb-ffm-read");
         env = LmdbEnv.create().mapSize(mapSize).maxDatabases(1)
                 .open(lmdbJavaDir, EnumSet.of(LmdbEnvFlag.WRITEMAP, LmdbEnvFlag.NOSYNC));
         try (LmdbTxn txn = env.beginTxn()) {

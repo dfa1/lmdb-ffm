@@ -4,7 +4,7 @@
 
 	<parent>
 		<groupId>io.github.dfa1.lmdb</groupId>
-		<artifactId>lmdb-java</artifactId>
+		<artifactId>lmdb-ffm</artifactId>
 		<version>0.1-SNAPSHOT</version>
 		<relativePath>../pom.xml</relativePath>
 	</parent>
@@ -14,7 +14,7 @@
 	<packaging>jar</packaging>
 
 	<description>
-		JMH microbenchmarks: lmdb-java (FFM: byte[], zero-copy MemorySegment, and
+		JMH microbenchmarks: lmdb-ffm (FFM: byte[], zero-copy MemorySegment, and
 		Mapper) against lmdbjava (JNR-FFI). Not published; not part of a release.
 	</description>
 

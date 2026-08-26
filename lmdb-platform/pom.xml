@@ -4,14 +4,14 @@
 
 	<parent>
 		<groupId>io.github.dfa1.lmdb</groupId>
-		<artifactId>lmdb-java</artifactId>
+		<artifactId>lmdb-ffm</artifactId>
 		<version>0.1-SNAPSHOT</version>
 		<relativePath>../pom.xml</relativePath>
 	</parent>
 
 	<artifactId>lmdb-platform</artifactId>
 	<name>lmdb-platform</name>
-	<description>lmdb-java bindings bundled with every platform's native library</description>
+	<description>lmdb-ffm bindings bundled with every platform's native library</description>
 	<!-- Empty convenience jar (no sources of its own): a single, ordinary jar
 	     dependency that transitively pulls everything. jar packaging (not pom) so
 	     clients can add it like any normal artifact. -->

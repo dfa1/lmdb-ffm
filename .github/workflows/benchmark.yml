@@ -3,7 +3,7 @@ name: Benchmark
 # Manual, exploratory, on every runner OS/arch lmdbjava has a native build
 # for. Not part of ci.yml: JMH runs are too slow to gate every push/PR.
 #
-# Reports lmdb-java (byte[], zero-copy MemorySegment, and Mapper) against
+# Reports lmdb-ffm (byte[], zero-copy MemorySegment, and Mapper) against
 # lmdbjava (JNR-FFI) on identical, pre-populated databases.
 #
 # Results are consumable two ways: the table is both printed to the job log
@@ -51,7 +51,7 @@ jobs:
           java -jar benchmark/target/benchmarks.jar '\.ReadBenchmark\.' '\.WriteBenchmark\.' \
             -rf json -rff results.json
 
-      - name: Report contestants (lmdb-java vs lmdbjava)
+      - name: Report contestants (lmdb-ffm vs lmdbjava)
         if: always()
         shell: bash
         run: |

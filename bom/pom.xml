@@ -4,7 +4,7 @@
 
 	<parent>
 		<groupId>io.github.dfa1.lmdb</groupId>
-		<artifactId>lmdb-java</artifactId>
+		<artifactId>lmdb-ffm</artifactId>
 		<version>0.1-SNAPSHOT</version>
 		<relativePath>../pom.xml</relativePath>
 	</parent>
@@ -12,7 +12,7 @@
 	<artifactId>lmdb-bom</artifactId>
 	<packaging>pom</packaging>
 	<name>lmdb-bom</name>
-	<description>Bill of materials for the lmdb-java modules</description>
+	<description>Bill of materials for the lmdb-ffm modules</description>
 
 	<dependencyManagement>
 		<dependencies>

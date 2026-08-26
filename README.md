@@ -1,11 +1,11 @@
-# lmdb-java
+# lmdb-ffm
 
-[![CI](https://github.com/dfa1/lmdb-java/actions/workflows/ci.yml/badge.svg)](https://github.com/dfa1/lmdb-java/actions/workflows/ci.yml)
+[![CI](https://github.com/dfa1/lmdb-ffm/actions/workflows/ci.yml/badge.svg)](https://github.com/dfa1/lmdb-ffm/actions/workflows/ci.yml)
 ![LMDB](https://img.shields.io/badge/LMDB-1.0.1-green.svg)
 ![Java](https://img.shields.io/badge/Java-25%2B-orange.svg)
 [![License](https://img.shields.io/badge/License-OpenLDAP--2.8-blue.svg)](LICENSE)
 
-**lmdb-java** wraps [LMDB](https://github.com/LMDB/lmdb) (Lightning
+**lmdb-ffm** wraps [LMDB](https://github.com/LMDB/lmdb) (Lightning
 Memory-Mapped Database) through the Java **Foreign Function & Memory (FFM)
 API** — no JNI, no hand-written C (JDK 25 is the first LTS with stable
 `java.lang.foreign`).
@@ -98,8 +98,8 @@ for the build.
 Not yet published — build and install locally:
 
 ```shell
-git clone --recurse-submodules https://github.com/dfa1/lmdb-java.git
-cd lmdb-java
+git clone --recurse-submodules https://github.com/dfa1/lmdb-ffm.git
+cd lmdb-ffm
 ./mvnw install
 ```
 

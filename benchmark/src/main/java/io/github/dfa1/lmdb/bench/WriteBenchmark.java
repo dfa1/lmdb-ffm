@@ -96,7 +96,7 @@ public class WriteBenchmark {
 
     @Setup(Level.Invocation)
     public void setupInvocation() throws Exception {
-        lmdbJavaDir = BenchSupport.tempDir("lmdb-java-write");
+        lmdbJavaDir = BenchSupport.tempDir("lmdb-ffm-write");
         env = LmdbEnv.create().mapSize(mapSize).maxDatabases(1)
                 .open(lmdbJavaDir, EnumSet.of(LmdbEnvFlag.WRITEMAP, LmdbEnvFlag.NOSYNC));
         try (LmdbTxn txn = env.beginTxn()) {
