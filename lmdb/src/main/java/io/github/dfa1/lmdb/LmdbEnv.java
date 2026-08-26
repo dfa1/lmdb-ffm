@@ -213,6 +213,36 @@ public final class LmdbEnv extends NativeObject {
         }
     }
 
+    /// Copies this environment to `path`, for backup or to distribute a
+    /// read-only snapshot to another host (LMDB databases must not be opened
+    /// directly from a remote filesystem — see [#open(Path, Set)] and copy to
+    /// a local path on each destination instead). No lockfile is copied; one
+    /// is recreated on demand when the copy is opened. Safe to run
+    /// concurrently with write transactions (it reads through its own
+    /// read-only transaction), though heavy concurrent writing can grow the
+    /// copy's file size.
+    ///
+    /// @param path  the directory the copy is written into — must already
+    ///              exist, be writable, and otherwise be empty
+    /// @param flags flags for the copy, e.g. `EnumSet.of(LmdbCopyFlag.COMPACT)`
+    ///              (`Set.of()` for a plain copy)
+    /// @throws LmdbException if the copy fails
+    public void copyTo(Path path, Set<LmdbCopyFlag> flags) {
+        Objects.requireNonNull(path, "path");
+        Objects.requireNonNull(flags, "flags");
+        int bits = LmdbFlag.toBits(flags);
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment pathPtr = arena.allocateFrom(path.toString());
+            int code;
+            try {
+                code = (int) Bindings.ENV_COPY2.invokeExact(ptr(), pathPtr, bits);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+        }
+    }
+
     /// Begins a new read-write transaction with no parent.
     ///
     /// @return the new transaction

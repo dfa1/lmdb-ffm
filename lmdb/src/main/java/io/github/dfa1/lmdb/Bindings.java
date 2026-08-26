@@ -88,6 +88,9 @@ final class Bindings {
     // int mdb_env_info(MDB_env *env, MDB_envinfo *stat)
     static final MethodHandle ENV_INFO =
             NativeLibrary.lookup("mdb_env_info", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    // int mdb_env_copy2(MDB_env *env, const char *path, unsigned int flags)
+    static final MethodHandle ENV_COPY2 =
+            NativeLibrary.lookup("mdb_env_copy2", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
 
     // --- transactions ---
 

@@ -185,4 +185,70 @@ class LmdbEnvTest {
             }
         }
     }
+
+    @Nested
+    class Copy {
+
+        @Test
+        void copiesEntriesToAFreshDirectory(@TempDir Path sourceDir, @TempDir Path destDir) {
+            // Given an environment with an entry written and committed
+            LmdbDbi dbi;
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(sourceDir, Set.of())) {
+                try (LmdbTxn txn = sut.beginTxn()) {
+                    dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                    txn.put(dbi, "k".getBytes(), "v".getBytes(), Set.of());
+                    txn.commit();
+                }
+
+                // When copied to an empty destination directory
+                sut.copyTo(destDir, Set.of());
+            }
+
+            // Then the copy opens independently and contains the same entry
+            try (LmdbEnv copy = LmdbEnv.create().mapSize(10L << 20).open(destDir, Set.of())) {
+                try (LmdbTxn txn = copy.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                    LmdbDbi copyDbi = txn.openDatabase(Set.of());
+                    assertThat(txn.get(copyDbi, "k".getBytes())).isEqualTo("v".getBytes());
+                }
+            }
+        }
+
+        @Test
+        void compactFlagAlsoProducesAReadableCopy(@TempDir Path sourceDir, @TempDir Path destDir) {
+            // Given an environment with an entry written and committed
+            LmdbDbi dbi;
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(sourceDir, Set.of())) {
+                try (LmdbTxn txn = sut.beginTxn()) {
+                    dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                    txn.put(dbi, "k".getBytes(), "v".getBytes(), Set.of());
+                    txn.commit();
+                }
+
+                // When copied with COMPACT
+                sut.copyTo(destDir, EnumSet.of(LmdbCopyFlag.COMPACT));
+            }
+
+            // Then the copy still opens and reads back the same entry
+            try (LmdbEnv copy = LmdbEnv.create().mapSize(10L << 20).open(destDir, Set.of())) {
+                try (LmdbTxn txn = copy.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                    LmdbDbi copyDbi = txn.openDatabase(Set.of());
+                    assertThat(txn.get(copyDbi, "k".getBytes())).isEqualTo("v".getBytes());
+                }
+            }
+        }
+
+        @Test
+        void rejectsANonExistentDestination(@TempDir Path sourceDir, @TempDir Path destDir) {
+            // Given an open environment and a destination directory that doesn't exist
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(sourceDir, Set.of())) {
+                Path missing = destDir.resolve("does-not-exist");
+
+                // When copied there
+                ThrowingCallable result = () -> sut.copyTo(missing, Set.of());
+
+                // Then the native call fails rather than silently creating it
+                assertThatThrownBy(result).isInstanceOf(LmdbException.class);
+            }
+        }
+    }
 }
