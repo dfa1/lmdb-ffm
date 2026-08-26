@@ -34,11 +34,17 @@ Two suites:
   trial, matching lmdbjava's own `Reader`):
   - `readSeq` / `readRev` — a forward/backward cursor scan touching only the
     value.
-  - `readKey` — a point lookup of *every* key, one per invocation, via a
-    cursor positioned with `SET`/`MDB_SET_KEY` (`ffmReadKey`/`lmdbjavaReadKey`)
-    — the same call path lmdbjava's own `readKey` benchmarks. `ffmReadKeyMapper`
-    is this project's zero-copy [`Mapper`](../lmdb/src/main/java/io/github/dfa1/lmdb/Mapper.java)
-    read; it has no lmdbjava counterpart.
+  - `readKey` — a point lookup of *every* key, one per invocation. Cursor
+    `SET`/`MDB_SET_KEY` (`ffmReadKey`/`lmdbjavaReadKey`) is the same call path
+    lmdbjava's own `readKey` benchmarks; `ffmGetSegment`/`lmdbjavaGet` is a
+    second, additional shape — `mdb_get`/`Dbi#get` directly, no cursor. Every
+    `ffm*` point lookup has a `byte[]`-key and a zero-copy `...Segment`
+    (`MemorySegment`-key) variant: `ffmReadKey`/`ffmReadKeySegment`,
+    `ffmReadKeyMapper`/`ffmReadKeySegmentMapper`, `ffmGetSegment`/
+    `ffmGetSegmentKeySegment`. `ffmReadKeyMapper`/`ffmReadKeySegmentMapper`
+    exercise this project's zero-copy
+    [`Mapper`](../lmdb/src/main/java/io/github/dfa1/lmdb/Mapper.java) read;
+    lmdbjava has no counterpart for those two.
 - `WriteBenchmark` — one `@Benchmark` invocation writes the *entire*
   `num`-entry dataset in a single transaction and cursor, with `MDB_APPEND`
   (both bindings insert strictly ascending keys). `@Setup`/`@TearDown` run at
@@ -101,38 +107,51 @@ Apple M5 (`osx-aarch64`), JDK 25.0.2, default `@Fork(1)`/`@Warmup(3)`/
 
 #### ReadBenchmark
 
-| num | `ffmReadKey` | `ffmReadKeyMapper` | `ffmReadRev` | `ffmReadSeq` | `lmdbjavaReadKey` | `lmdbjavaReadRev` | `lmdbjavaReadSeq` |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| 1,000 | 0.075 ± 0.000 | 0.092 ± 0.000 | 0.014 ± 0.000 | 0.014 ± 0.000 | **0.072 ± 0.000** | **0.010 ± 0.000** | **0.010 ± 0.000** |
-| 1,000,000 | 78.442 ± 0.080 | 164.685 ± 0.133 | 15.723 ± 0.034 | 17.062 ± 0.044 | 78.200 ± 0.078 | **10.478 ± 0.016** | **11.963 ± 0.024** |
+| num | `ffmReadKey` | `ffmReadKeySegment` | `ffmReadKeyMapper` | `ffmReadKeySegmentMapper` | `ffmGetSegment` | `ffmGetSegmentKeySegment` | `ffmReadRev` | `ffmReadSeq` | `lmdbjavaReadKey` | `lmdbjavaGet` | `lmdbjavaReadRev` | `lmdbjavaReadSeq` |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1,000 | 0.074 ± 0.000 | 0.073 ± 0.000 | 0.092 ± 0.000 | 0.085 ± 0.000 | 0.093 ± 0.000 | 0.092 ± 0.000 | 0.015 ± 0.000 | 0.015 ± 0.000 | **0.072 ± 0.000** | 0.158 ± 0.000 | **0.010 ± 0.000** | **0.010 ± 0.000** |
+| 1,000,000 | 79.746 ± 0.050 | 76.548 ± 0.054 | 166.073 ± 0.228 | 169.650 ± 0.118 | 168.800 ± 0.418 | 171.873 ± 0.187 | 15.583 ± 0.030 | 18.137 ± 0.047 | 76.843 ± 0.078 | 257.076 ± 1.698 | **10.630 ± 0.017** | 15.844 ± 0.169 |
 
-`ffmReadKey` now matches lmdbjava almost exactly. It didn't originally: an
-earlier run of this same benchmark caught `LmdbCursor#get(LmdbCursorOp, byte[])`
-and `LmdbTxn#getSegment`/`get`/`get(..., Mapper)` opening a fresh
-`Arena.ofConfined()` (plus 2–3 native allocations and a `memcpy`) on *every
-call* — the same anti-pattern already fixed once for the no-key
-`readSeq`/`readRev` path, just never carried over to the keyed one. Before
-the fix, `ffmReadKey` was 134.739 ms/op at 1,000,000 (~1.7x slower than
-lmdbjava); reusing persistent out-param slots and a growable key buffer
-(`LmdbVal.growBuffer`) closed nearly the entire gap. `ffmReadKeyMapper`
-improved by the same amount but remains genuinely slower than `ffmReadKey`
-by design: its zero-copy [`Mapper`](../lmdb/src/main/java/io/github/dfa1/lmdb/Mapper.java)
-callback still pays one small per-call `Arena` to guarantee the value view
-becomes inaccessible the instant the call returns — see `CLAUDE.md`'s code
-conventions section for why that one is intentionally not reused across
-calls.
+Two call paths, not one, and the split matters more than `byte[]` vs
+`MemorySegment` key does:
+
+- **Cursor `SET`, one cursor reused across all 1,000,000 lookups**
+  (`ffmReadKey`/`ffmReadKeySegment`, `lmdbjavaReadKey`): ~77–80ms. This is
+  the path both bindings' own official benchmarks measure, and the one this
+  project's earlier per-call-`Arena` bug (fixed in a prior commit) used to
+  cost ~1.7x on. `ffmReadKeySegment`'s zero-copy key edges out
+  `ffmReadKey`'s `byte[]` key slightly, as expected.
+- **Direct `mdb_get`/`Dbi#get`, no cursor** (`ffmGetSegment`/
+  `ffmGetSegmentKeySegment`/`ffmReadKeyMapper`/`ffmReadKeySegmentMapper`,
+  `lmdbjavaGet`): ~166–257ms, over **2x slower in both bindings** for this
+  sequential-key workload. `mdb_get` opens and discards an internal cursor
+  on every call, so it can never benefit from the position locality a
+  reused, explicit cursor gets from ascending keys the way `MDB_SET` does —
+  an LMDB characteristic, not an artifact of either binding's FFI layer.
+  lmdbjava pays this penalty far more sharply (257ms, ~3.3x its own
+  `readKey`) than this project does (~167–172ms, ~2.1x `ffmReadKey`) — this
+  project's direct-`get` path is ~35% faster than lmdbjava's equivalent.
+- Within the direct-`mdb_get` cluster, `ffmGetSegment` (no
+  [`Mapper`](../lmdb/src/main/java/io/github/dfa1/lmdb/Mapper.java) at all)
+  sits right alongside `ffmReadKeyMapper` (168.8ms vs 166.1ms) — correcting
+  an earlier, incomplete read of this same data that attributed
+  `ffmReadKeyMapper`'s gap over `ffmReadKey` to `Mapper`'s one small
+  per-call scoping `Arena`. That arena's actual cost is negligible (a few ms
+  over 1,000,000 calls, not tens); the real driver is the call path
+  (`mdb_get` vs cursor `SET`), and `ffmGetSegment` — which has no `Mapper`
+  and no scoping arena at all — isolates that.
 
 #### WriteBenchmark
 
 | num | `ffmWriteBytes` | `ffmWriteSegment` | `lmdbjava` |
 |---|---:|---:|---:|
-| 1,000 | 0.128 ± 0.000 | 0.099 ± 0.000 | 0.108 ± 0.001 |
-| 1,000,000 | 119.254 ± 1.310 | 105.604 ± 1.351 | **78.933 ± 1.771** |
+| 1,000 | 0.108 ± 0.000 | 0.104 ± 0.000 | 0.111 ± 0.000 |
+| 1,000,000 | 112.777 ± 1.290 | 103.312 ± 1.716 | 110.008 ± 1.479 |
 
-Unaffected by the read-path fix above (write paths weren't touched). Within
-noise at 1,000; lmdbjava pulls ahead at 1,000,000 — the write path wasn't
-root-caused as part of this investigation and remains an open question, not
-yet a diagnosed bottleneck the way the read path was.
+Unaffected by the read-path work above (write paths weren't touched). All
+three track closely at both sizes, run to run — the ~15–20% lmdbjava lead
+seen in an earlier run of this same suite didn't reproduce here, i.e. it was
+noise, not a real, repeatable gap.
 
 Regenerate with:
 

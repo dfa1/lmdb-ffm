@@ -27,11 +27,14 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.EnumSet;
 import java.util.concurrent.TimeUnit;
+
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 
 import static org.lmdbjava.DbiFlags.MDB_CREATE;
 import static org.lmdbjava.EnvFlags.MDB_NOSYNC;
@@ -53,17 +56,26 @@ import static org.lmdbjava.SeekOp.MDB_PREV;
 ///   `MDB_NEXT`/`MDB_LAST`/`MDB_PREV` there; [LmdbCursorOp#FIRST]/[#NEXT]/
 ///   [#LAST]/[#PREV] here).
 /// - `readKey`: one point lookup of *every* key per invocation, via a cursor
-///   positioned with `SET`/`MDB_SET_KEY` — not `Dbi#get`/`LmdbTxn#get` — since
-///   that is the exact call path lmdbjava's own `readKey` benchmarks.
+///   positioned with `SET`/`MDB_SET_KEY` — that is the exact call path
+///   lmdbjava's own `readKey` benchmarks. `get`/`getSegment` (`mdb_get`
+///   directly, no cursor) is a second, additional point-lookup shape this
+///   project also supports; `lmdbjavaGet` benchmarks lmdbjava's matching
+///   `Dbi#get(Txn, T)` for a fair comparison, even though lmdbjava's own
+///   official suite doesn't include it.
 /// - `SampleTime`/milliseconds, not `Throughput`: lmdbjava reports a
 ///   full-pass latency distribution, not an ops-per-time rate.
 /// - Both environments open with `MDB_WRITEMAP` + `MDB_NOSYNC`, and the
 ///   database is populated with `MDB_APPEND` (sequential keys) — lmdbjava's
 ///   own defaults (`CommonLmdbJava.writeMap`, `Common.sequential`).
 ///
-/// `ffmReadKeyMapper` has no lmdbjava counterpart — it exercises this
-/// project's zero-copy [io.github.dfa1.lmdb.Mapper] read, which has no
-/// equivalent call shape in lmdbjava.
+/// Every `ffm*` point lookup below has a `byte[]`-key variant and a
+/// `...Segment` (zero-copy [MemorySegment]) key variant, covering this
+/// project's full read surface: `ffmReadKey`/`ffmReadKeySegment` (cursor
+/// `SET`), `ffmReadKeyMapper`/`ffmReadKeySegmentMapper` (`mdb_get` through a
+/// [Mapper][io.github.dfa1.lmdb.Mapper]), and `ffmGetSegment`/
+/// `ffmGetSegmentKeySegment` (`mdb_get`, raw — no `Mapper`, no cursor).
+/// `lmdbjavaGet` is `ffmGetSegment`'s counterpart, lmdbjava's `Dbi#get(Txn,
+/// T)`, even though lmdbjava's own official suite doesn't benchmark it.
 @BenchmarkMode(Mode.SampleTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Thread)
@@ -82,6 +94,11 @@ public class ReadBenchmark {
     private int num;
 
     private byte[][] keys;
+    // Off-heap mirror of keys, for the *Segment zero-copy-key benchmarks —
+    // built once at setup so those benchmarks measure the lookup itself, not
+    // a byte[]-to-native copy on every iteration.
+    private Arena keySegmentArena;
+    private MemorySegment[] keySegments;
 
     private Path lmdbJavaDir;
     private LmdbEnv env;
@@ -101,6 +118,13 @@ public class ReadBenchmark {
         keys = BenchData.keys(num);
         byte[] value = BenchData.value();
         long mapSize = BenchData.mapSize(num, BenchData.VALUE_SIZE);
+
+        keySegmentArena = Arena.ofConfined();
+        keySegments = new MemorySegment[num];
+        for (int i = 0; i < num; i++) {
+            keySegments[i] = keySegmentArena.allocate(keys[i].length);
+            MemorySegment.copy(keys[i], 0, keySegments[i], JAVA_BYTE, 0, keys[i].length);
+        }
 
         lmdbJavaDir = BenchSupport.tempDir("lmdb-java-read");
         env = LmdbEnv.create().mapSize(mapSize).maxDatabases(1)
@@ -150,6 +174,7 @@ public class ReadBenchmark {
         readTxn.close();
         env.close();
         BenchSupport.deleteRecursively(lmdbJavaDir);
+        keySegmentArena.close();
 
         lmdbjavaCursor.close();
         lmdbjavaReadTxn.close();
@@ -195,9 +220,37 @@ public class ReadBenchmark {
     }
 
     @Benchmark
+    public void ffmReadKeySegment(Blackhole bh) {
+        for (MemorySegment k : keySegments) {
+            bh.consume(cursor.get(LmdbCursorOp.SET, k));
+        }
+    }
+
+    @Benchmark
     public void ffmReadKeyMapper(Blackhole bh) {
         for (byte[] k : keys) {
             bh.consume(readTxn.get(dbi, k, MemorySegment::byteSize));
+        }
+    }
+
+    @Benchmark
+    public void ffmReadKeySegmentMapper(Blackhole bh) {
+        for (MemorySegment k : keySegments) {
+            bh.consume(readTxn.get(dbi, k, MemorySegment::byteSize));
+        }
+    }
+
+    @Benchmark
+    public void ffmGetSegment(Blackhole bh) {
+        for (byte[] k : keys) {
+            bh.consume(readTxn.getSegment(dbi, k));
+        }
+    }
+
+    @Benchmark
+    public void ffmGetSegmentKeySegment(Blackhole bh) {
+        for (MemorySegment k : keySegments) {
+            bh.consume(readTxn.getSegment(dbi, k));
         }
     }
 
@@ -208,6 +261,15 @@ public class ReadBenchmark {
             lmdbjavaKeyBuf.put(k).flip();
             bh.consume(lmdbjavaCursor.get(lmdbjavaKeyBuf, MDB_SET_KEY));
             bh.consume(lmdbjavaReadTxn.val());
+        }
+    }
+
+    @Benchmark
+    public void lmdbjavaGet(Blackhole bh) {
+        for (byte[] k : keys) {
+            lmdbjavaKeyBuf.clear();
+            lmdbjavaKeyBuf.put(k).flip();
+            bh.consume(lmdbjavaDbi.get(lmdbjavaReadTxn, lmdbjavaKeyBuf));
         }
     }
 }
