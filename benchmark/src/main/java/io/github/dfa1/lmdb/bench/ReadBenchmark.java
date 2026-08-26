@@ -53,8 +53,8 @@ import static org.lmdbjava.SeekOp.MDB_PREV;
 ///
 /// - `readSeq`/`readRev`: one forward/backward cursor scan of the whole
 ///   database *per invocation*, touching only the value (`SeekOp.MDB_FIRST`/
-///   `MDB_NEXT`/`MDB_LAST`/`MDB_PREV` there; [LmdbCursorOp#FIRST]/[#NEXT]/
-///   [#LAST]/[#PREV] here).
+///   `MDB_NEXT`/`MDB_LAST`/`MDB_PREV` there; [LmdbCursorOp#FIRST]/[LmdbCursorOp#NEXT]/
+///   [LmdbCursorOp#LAST]/[LmdbCursorOp#PREV] here).
 /// - `readKey`: one point lookup of *every* key per invocation, via a cursor
 ///   positioned with `SET`/`MDB_SET_KEY` — that is the exact call path
 ///   lmdbjava's own `readKey` benchmarks. `get`/`getSegment` (`mdb_get`

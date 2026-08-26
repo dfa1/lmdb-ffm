@@ -10,6 +10,7 @@ import java.util.EnumSet;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class LmdbEnvTest {
@@ -92,6 +93,95 @@ class LmdbEnvTest {
                 assertThat(info.mapSize()).isEqualTo(mapSize);
                 assertThat(info.numReaders()).isZero();
                 assertThat(info.maxReaders()).isPositive();
+            }
+        }
+
+        @Test
+        void infoReportsTheConfiguredMaxReaders(@TempDir Path dir) {
+            // Given an environment configured with an explicit reader slot count
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).maxReaders(42).open(dir, Set.of())) {
+                // Then info reflects that same count
+                assertThat(sut.info().maxReaders()).isEqualTo(42);
+            }
+        }
+    }
+
+    @Nested
+    class Sync {
+
+        @Test
+        void syncSucceedsOnAFreshEnvironment(@TempDir Path dir) {
+            // Given an open environment with nothing written yet
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                // When flushed, both unconditionally and only-if-needed
+                ThrowingCallable forced = () -> sut.sync(true);
+                ThrowingCallable unforced = () -> sut.sync(false);
+
+                // Then neither reports an error
+                assertThatCode(forced).doesNotThrowAnyException();
+                assertThatCode(unforced).doesNotThrowAnyException();
+            }
+        }
+    }
+
+    @Nested
+    class NestedTransactions {
+
+        @Test
+        void aChildTransactionsWritesAreVisibleAfterBothCommit(@TempDir Path dir) {
+            // Given an environment and a parent write transaction
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                LmdbDbi dbi;
+                try (LmdbTxn parent = sut.beginTxn()) {
+                    dbi = parent.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+
+                    // When a child transaction writes and both commit
+                    try (LmdbTxn child = sut.beginTxn(parent, Set.of())) {
+                        child.put(dbi, "k".getBytes(), "v".getBytes(), Set.of());
+                        child.commit();
+                    }
+                    parent.commit();
+                }
+
+                // Then the write is visible afterward
+                try (LmdbTxn txn = sut.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                    assertThat(txn.get(dbi, "k".getBytes())).isEqualTo("v".getBytes());
+                }
+            }
+        }
+
+        @Test
+        void aChildTransactionsAbortLeavesTheParentUnaffected(@TempDir Path dir) {
+            // Given a parent write transaction
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                LmdbDbi dbi;
+                try (LmdbTxn parent = sut.beginTxn()) {
+                    dbi = parent.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+
+                    // When a child transaction writes but aborts
+                    try (LmdbTxn child = sut.beginTxn(parent, Set.of())) {
+                        child.put(dbi, "k".getBytes(), "v".getBytes(), Set.of());
+                        child.abort();
+                    }
+                    parent.commit();
+                }
+
+                // Then the parent never sees the child's write
+                try (LmdbTxn txn = sut.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                    assertThat(txn.get(dbi, "k".getBytes())).isNull();
+                }
+            }
+        }
+
+        @Test
+        void rejectsANullParent(@TempDir Path dir) {
+            // Given an open environment
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                // When a nested transaction is begun with a null parent
+                ThrowingCallable result = () -> sut.beginTxn(null, Set.of());
+
+                // Then it is rejected rather than passed through to the native call
+                assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
             }
         }
     }

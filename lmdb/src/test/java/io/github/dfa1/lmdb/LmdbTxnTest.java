@@ -140,6 +140,80 @@ class LmdbTxnTest {
         }
 
         @Test
+        void statReportsTheNumberOfEntries() {
+            // Given a database with two entries
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k1"), value("v1"), Set.of());
+                txn.put(dbi, key("k2"), value("v2"), Set.of());
+                txn.commit();
+            }
+
+            // When its statistics are read
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                LmdbStat stat = txn.stat(dbi);
+
+                // Then it reports both entries
+                assertThat(stat.entries()).isEqualTo(2L);
+            }
+        }
+
+        @Test
+        void deletesOneDuplicateDataValueLeavingOthersInPlace() {
+            // Given a DUPSORT database with two data values under the same key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.put(dbi, key("k"), value("v1"), Set.of());
+                txn.put(dbi, key("k"), value("v2"), Set.of());
+                txn.commit();
+            }
+
+            // When one specific duplicate is deleted
+            try (LmdbTxn txn = env.beginTxn()) {
+                boolean deleted = txn.delete(dbi, key("k"), value("v1"));
+                txn.commit();
+
+                assertThat(deleted).isTrue();
+            }
+
+            // Then only the other duplicate remains
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                assertThat(txn.get(dbi, key("k"))).isEqualTo(value("v2"));
+            }
+        }
+
+        @Test
+        void deletingAMissingDuplicateReportsFalse() {
+            // Given a DUPSORT database with one data value under a key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.put(dbi, key("k"), value("v1"), Set.of());
+                txn.commit();
+            }
+
+            // When a duplicate that was never stored is deleted
+            try (LmdbTxn txn = env.beginTxn()) {
+                boolean deleted = txn.delete(dbi, key("k"), value("v2"));
+                txn.commit();
+
+                // Then it reports false rather than throwing
+                assertThat(deleted).isFalse();
+            }
+        }
+
+        @Test
+        void envReturnsTheOwningEnvironment() {
+            // Given a transaction begun on an environment
+            try (LmdbTxn txn = env.beginTxn()) {
+                // Then it reports that same environment back
+                assertThat(txn.env()).isSameAs(env);
+            }
+        }
+
+        @Test
         void noOverwriteRejectsAnExistingKey() {
             // Given an existing key
             LmdbDbi dbi;
@@ -294,6 +368,31 @@ class LmdbTxnTest {
             }
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                 assertThat(txn.get(dbi, key("k"))).isNull();
+            }
+        }
+
+        @Test
+        void deletesOneDuplicateDataValueViaDirectByteBuffers() {
+            // Given a DUPSORT database with two data values under the same key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.put(dbi, key("k"), value("v1"), Set.of());
+                txn.put(dbi, key("k"), value("v2"), Set.of());
+                txn.commit();
+            }
+
+            // When one specific duplicate is deleted via direct ByteBuffer key/data
+            try (LmdbTxn txn = env.beginTxn()) {
+                boolean deleted = txn.delete(dbi, directBuffer("k"), directBuffer("v1"));
+                txn.commit();
+
+                assertThat(deleted).isTrue();
+            }
+
+            // Then only the other duplicate remains
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                assertThat(txn.get(dbi, key("k"))).isEqualTo(value("v2"));
             }
         }
 
