@@ -68,6 +68,19 @@ Built `.dylib`/`.so`/`.dll` are git-ignored; they are regenerated from the submo
 - Native pointers wrap in `NativeObject` (`AutoCloseable`, idempotent close):
   `LmdbEnv` and `LmdbCursor`. `LmdbTxn` also extends it since `mdb_txn_commit`/
   `mdb_txn_abort` free the underlying `MDB_txn*` exactly once.
+- `LmdbCursor#get(LmdbCursorOp)` (the no-key `FIRST`/`NEXT`/`LAST`/`PREV`
+  positioning used by every scan loop) reuses two `MDB_val` out-param slots
+  allocated once, in a `LmdbCursor`-lifetime `Arena`, instead of opening a
+  fresh confined `Arena` per call — allocating two 16-byte structs from a new
+  `Arena.ofConfined()` on every call was, per `benchmark/CursorScanBenchmark`,
+  ~300x slower than lmdbjava's equivalent scan on an identical database.
+  Safe to reuse: LMDB only ever writes through these pointers, never reads
+  stale content from them, and the `MemorySegment`s an `Entry` hands back are
+  read out of the slots (pointing at the mmap, not at the slots themselves)
+  before the next call overwrites them. The key-taking `get`/`put` overloads
+  keep their per-call `Arena` — their key/data content varies by call, so
+  there is no fixed-size slot to reuse, and they are not the tight-loop case
+  this optimization targets.
 - All native handles live in `Bindings`; `size_t` maps to `JAVA_LONG` (LP64).
   LMDB return codes are `int`: `0` (`MDB_SUCCESS`) or an error — positive
   values are `errno` codes, negative values are LMDB's own `MDB_*` codes.

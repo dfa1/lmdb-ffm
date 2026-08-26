@@ -41,13 +41,25 @@ public final class LmdbCursor extends NativeObject {
     public record Entry(MemorySegment key, MemorySegment data) {
     }
 
+    // Reused across every no-key get(LmdbCursorOp) call: FIRST/NEXT/LAST/PREV
+    // take no caller-supplied key, so these two 16-byte MDB_val out-param
+    // slots can live for the cursor's whole lifetime instead of being
+    // allocated (inside a freshly opened Arena) on every single call — the
+    // dominant cost of a tight scan loop otherwise. Safe to reuse: LMDB only
+    // ever writes through these pointers, and the MemorySegment handed back
+    // in an Entry is read out of them (LmdbVal.data) before the next call
+    // overwrites their fields, exactly like reading any other out-parameter.
+    private final Arena arena = Arena.ofConfined();
+    private final MemorySegment keyVal = LmdbVal.allocate(arena);
+    private final MemorySegment dataVal = LmdbVal.allocate(arena);
+
     private LmdbCursor(MemorySegment ptr) {
         super(ptr);
     }
 
     static LmdbCursor open(LmdbTxn txn, LmdbDbi dbi) {
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment ptr = NativeCall.createHandle(arena,
+        try (Arena scratch = Arena.ofConfined()) {
+            MemorySegment ptr = NativeCall.createHandle(scratch,
                     out -> (int) Bindings.CURSOR_OPEN.invokeExact(txn.ptr(), dbi.handle(), out));
             return new LmdbCursor(ptr);
         }
@@ -62,13 +74,9 @@ public final class LmdbCursor extends NativeObject {
     /// @throws LmdbException if the native call fails
     public Optional<Entry> get(LmdbCursorOp op) {
         Objects.requireNonNull(op, "op");
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment keyVal = LmdbVal.allocate(arena);
-            MemorySegment dataVal = LmdbVal.allocate(arena);
-            boolean found = NativeCall.checkFound(() ->
-                    (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value()));
-            return found ? Optional.of(new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal))) : Optional.empty();
-        }
+        boolean found = NativeCall.checkFound(() ->
+                (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value()));
+        return found ? Optional.of(new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal))) : Optional.empty();
     }
 
     /// Positions this cursor per `op` (one that takes a key input, such as
@@ -198,6 +206,10 @@ public final class LmdbCursor extends NativeObject {
 
     @Override
     protected void tryClose(MemorySegment ptr) throws Throwable {
-        Bindings.CURSOR_CLOSE.invokeExact(ptr);
+        try {
+            Bindings.CURSOR_CLOSE.invokeExact(ptr);
+        } finally {
+            arena.close();
+        }
     }
 }
