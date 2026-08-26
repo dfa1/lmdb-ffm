@@ -44,6 +44,7 @@
 		<module>lmdb</module>
 		<module>lmdb-platform</module>
 		<module>bom</module>
+		<module>benchmark</module>
 	</modules>
 
 	<properties>

@@ -32,6 +32,9 @@ Multi-module Maven build (`io.github.dfa1.lmdb:lmdb-java`):
 - `lmdb-platform/` — convenience jar pulling in the bindings plus every
   native classifier.
 - `bom/` — dependency BOM.
+- `benchmark/` — JMH microbenchmarks against `lmdbjava` (JNR-FFI, not JNA);
+  not published, run via `.github/workflows/benchmark.yml` (`workflow_dispatch`)
+  or locally — see `benchmark/README.md`.
 - `third_party/lmdb` — vendored `LMDB/lmdb` git submodule (the C source of
   truth), pinned to the latest stable tag (currently `LMDB_1.0.1`).
 

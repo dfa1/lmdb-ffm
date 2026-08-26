@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>io.github.dfa1.lmdb</groupId>
+		<artifactId>lmdb-java</artifactId>
+		<version>0.1-SNAPSHOT</version>
+		<relativePath>../pom.xml</relativePath>
+	</parent>
+
+	<artifactId>lmdb-benchmark</artifactId>
+	<name>lmdb-benchmark</name>
+	<packaging>jar</packaging>
+
+	<description>
+		JMH microbenchmarks: lmdb-java (FFM: byte[], zero-copy MemorySegment, and
+		Mapper) against lmdbjava (JNR-FFI). Not published; not part of a release.
+	</description>
+
+	<properties>
+		<jmh.version>1.37</jmh.version>
+		<lmdbjava.version>0.9.1</lmdbjava.version>
+		<!-- Benchmark code is exempt from the Javadoc gate; checkstyle still applies. -->
+		<maven.javadoc.skip>true</maven.javadoc.skip>
+		<maven.deploy.skip>true</maven.deploy.skip>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>io.github.dfa1.lmdb</groupId>
+			<artifactId>lmdb</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+		<!-- Contestant: JNR-FFI, not JNI and not JNA. Bundles native liblmdb
+		     inside this one jar for linux-x86_64, linux-aarch64, osx-x86_64,
+		     osx-aarch64 and windows-x86_64 (verified via `unzip -l` against
+		     0.9.1: no windows-aarch64). On that one unsupported host the
+		     lmdbjava* benchmarks fail at native-library-load time with
+		     UnsatisfiedLinkError; the lmdbJava* (this project's) benchmarks are
+		     unaffected and still run. See README.md. -->
+		<dependency>
+			<groupId>org.lmdbjava</groupId>
+			<artifactId>lmdbjava</artifactId>
+			<version>${lmdbjava.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.openjdk.jmh</groupId>
+			<artifactId>jmh-core</artifactId>
+			<version>${jmh.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.openjdk.jmh</groupId>
+			<artifactId>jmh-generator-annprocess</artifactId>
+			<version>${jmh.version}</version>
+			<scope>provided</scope>
+		</dependency>
+	</dependencies>
+
+	<!--
+		The FFM bindings load liblmdb from a platform-specific native JAR on the
+		classpath. Pull in the one matching the host (runtime scope) so the shaded
+		benchmark jar can resolve the bundled library.
+	-->
+	<profiles>
+		<profile>
+			<id>native-osx-aarch64</id>
+			<activation>
+				<os><family>mac</family><arch>aarch64</arch></os>
+			</activation>
+			<dependencies>
+				<dependency>
+					<groupId>io.github.dfa1.lmdb</groupId>
+					<artifactId>lmdb-native-osx-aarch64</artifactId>
+					<version>${project.version}</version>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>native-osx-x86_64</id>
+			<activation>
+				<os><family>mac</family><arch>x86_64</arch></os>
+			</activation>
+			<dependencies>
+				<dependency>
+					<groupId>io.github.dfa1.lmdb</groupId>
+					<artifactId>lmdb-native-osx-x86_64</artifactId>
+					<version>${project.version}</version>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>native-linux-x86_64</id>
+			<activation>
+				<os><family>unix</family><name>linux</name><arch>amd64</arch></os>
+			</activation>
+			<dependencies>
+				<dependency>
+					<groupId>io.github.dfa1.lmdb</groupId>
+					<artifactId>lmdb-native-linux-x86_64</artifactId>
+					<version>${project.version}</version>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>native-linux-aarch64</id>
+			<activation>
+				<os><family>unix</family><name>linux</name><arch>aarch64</arch></os>
+			</activation>
+			<dependencies>
+				<dependency>
+					<groupId>io.github.dfa1.lmdb</groupId>
+					<artifactId>lmdb-native-linux-aarch64</artifactId>
+					<version>${project.version}</version>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>native-windows-x86_64</id>
+			<activation>
+				<os><family>windows</family><arch>amd64</arch></os>
+			</activation>
+			<dependencies>
+				<dependency>
+					<groupId>io.github.dfa1.lmdb</groupId>
+					<artifactId>lmdb-native-windows-x86_64</artifactId>
+					<version>${project.version}</version>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>native-windows-aarch64</id>
+			<activation>
+				<os><family>windows</family><arch>aarch64</arch></os>
+			</activation>
+			<dependencies>
+				<dependency>
+					<groupId>io.github.dfa1.lmdb</groupId>
+					<artifactId>lmdb-native-windows-aarch64</artifactId>
+					<version>${project.version}</version>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+	</profiles>
+
+	<build>
+		<finalName>benchmarks</finalName>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<configuration>
+					<annotationProcessorPaths>
+						<path>
+							<groupId>org.openjdk.jmh</groupId>
+							<artifactId>jmh-generator-annprocess</artifactId>
+							<version>${jmh.version}</version>
+						</path>
+					</annotationProcessorPaths>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-shade-plugin</artifactId>
+				<version>3.6.2</version>
+				<executions>
+					<execution>
+						<phase>package</phase>
+						<goals>
+							<goal>shade</goal>
+						</goals>
+						<configuration>
+							<transformers>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+									<mainClass>org.openjdk.jmh.Main</mainClass>
+								</transformer>
+								<transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer" />
+							</transformers>
+							<filters>
+								<filter>
+									<artifact>*:*</artifact>
+									<excludes>
+										<exclude>META-INF/*.SF</exclude>
+										<exclude>META-INF/*.DSA</exclude>
+										<exclude>META-INF/*.RSA</exclude>
+									</excludes>
+								</filter>
+							</filters>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+</project>
