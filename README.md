@@ -16,7 +16,8 @@ The differentiator is the **zero-copy read path**: a lookup hands back a
 
 Currently covers environments, transactions, named databases, get/put/delete
 and cursors — enough to build on, not (yet) LMDB's full surface. See
-[CLAUDE.md](CLAUDE.md) for what's deliberately left out and why.
+[API coverage](#api-coverage) below for exactly what's bound and what isn't,
+and [CLAUDE.md](CLAUDE.md) for the design decisions behind what's here.
 
 ## Quickstart
 
@@ -92,6 +93,43 @@ Run with `--enable-native-access=ALL-UNNAMED`.
 Every native `liblmdb` is cross-compiled hermetically from the vendored
 `third_party/lmdb` submodule with **`zig cc`** — see [CLAUDE.md](CLAUDE.md)
 for the build.
+
+## API coverage
+
+29 of `lmdb.h`'s 65 `mdb_*` functions are bound today:
+
+| Area | Bound |
+|---|---|
+| Environment | `mdb_env_create`, `mdb_env_open`, `mdb_env_close`, `mdb_env_set_mapsize`, `mdb_env_set_maxdbs`, `mdb_env_set_maxreaders`, `mdb_env_get_maxkeysize`, `mdb_env_sync`, `mdb_env_stat`, `mdb_env_info`, `mdb_env_copy2` |
+| Transactions | `mdb_txn_begin`, `mdb_txn_commit`, `mdb_txn_abort` |
+| Databases | `mdb_dbi_open`, `mdb_dbi_close`, `mdb_drop` |
+| Data access | `mdb_get`, `mdb_put`, `mdb_del`, `mdb_stat` |
+| Cursors | `mdb_cursor_open`, `mdb_cursor_close`, `mdb_cursor_get`, `mdb_cursor_put`, `mdb_cursor_del`, `mdb_cursor_count` |
+| Misc | `mdb_version`, `mdb_strerror` |
+
+Not yet bound (36), in three very different categories:
+
+**Plain data in/out — straightforward to add, just not needed yet:**
+`mdb_txn_reset`, `mdb_txn_renew`, `mdb_txn_prepare`, `mdb_cursor_renew`,
+`mdb_cursor_is_db`, `mdb_reader_check`, `mdb_reader_list`, `mdb_dbi_flags`,
+`mdb_txn_flags`, `mdb_env_get_flags`, `mdb_env_get_path`, `mdb_env_get_fd`,
+`mdb_env_get_maxreaders`, `mdb_env_set_flags`, `mdb_env_set_pagesize`,
+`mdb_env_copy`, `mdb_env_copyfd`, `mdb_env_copyfd2`, `mdb_env_incr_dump`,
+`mdb_env_incr_dumpfd`, `mdb_env_incr_loadfd`, `mdb_env_rollback`, `mdb_cmp`,
+`mdb_dcmp`.
+
+**Blocked on native callbacks** — these take a C function pointer (a custom
+comparator, a relocation/checksum/encryption hook, or a plugin loader
+supplying one), which this binding would have to supply via
+`Linker.upcallStub` (a native-callable trampoline into a Java `MethodHandle`)
+— a real, separate chunk of work, not implemented:
+`mdb_set_compare`, `mdb_set_dupsort`, `mdb_set_relctx`, `mdb_set_relfunc`,
+`mdb_env_set_assert`, `mdb_env_set_checksum`, `mdb_env_set_encrypt`,
+`mdb_modload`, `mdb_modsetup`, `mdb_modunload`.
+
+**Opaque user-context pointer** — trivial to bind, but pointless in a Java
+API (a caller would just keep a reference on their own wrapper object
+instead): `mdb_env_set_userctx`, `mdb_env_get_userctx`.
 
 ## Build from source
 
