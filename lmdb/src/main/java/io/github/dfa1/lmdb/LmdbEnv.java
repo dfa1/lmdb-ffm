@@ -6,6 +6,8 @@ import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Set;
 
+import static java.lang.foreign.ValueLayout.ADDRESS;
+
 /// A database environment — wraps `MDB_env*`. An environment supports
 /// multiple databases, all residing in the same shared memory map at one
 /// filesystem path.
@@ -42,9 +44,15 @@ public final class LmdbEnv extends NativeObject {
     /// @throws LmdbException if the native call fails
     public static LmdbEnv create() {
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment ptr = NativeCall.createHandle(arena,
-                    out -> (int) Bindings.ENV_CREATE.invokeExact(out));
-            return new LmdbEnv(ptr);
+            MemorySegment out = arena.allocate(ADDRESS);
+            int code;
+            try {
+                code = (int) Bindings.ENV_CREATE.invokeExact(out);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+            return new LmdbEnv(out.get(ADDRESS, 0));
         }
     }
 
@@ -55,7 +63,13 @@ public final class LmdbEnv extends NativeObject {
     /// @return `this`, for chaining
     /// @throws LmdbException if the native call fails
     public LmdbEnv mapSize(long bytes) {
-        NativeCall.check(() -> (int) Bindings.ENV_SET_MAPSIZE.invokeExact(ptr(), bytes));
+        int code;
+        try {
+            code = (int) Bindings.ENV_SET_MAPSIZE.invokeExact(ptr(), bytes);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
         return this;
     }
 
@@ -67,7 +81,13 @@ public final class LmdbEnv extends NativeObject {
     /// @return `this`, for chaining
     /// @throws LmdbException if the native call fails
     public LmdbEnv maxDatabases(int count) {
-        NativeCall.check(() -> (int) Bindings.ENV_SET_MAXDBS.invokeExact(ptr(), count));
+        int code;
+        try {
+            code = (int) Bindings.ENV_SET_MAXDBS.invokeExact(ptr(), count);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
         return this;
     }
 
@@ -78,7 +98,13 @@ public final class LmdbEnv extends NativeObject {
     /// @return `this`, for chaining
     /// @throws LmdbException if the native call fails
     public LmdbEnv maxReaders(int count) {
-        NativeCall.check(() -> (int) Bindings.ENV_SET_MAXREADERS.invokeExact(ptr(), count));
+        int code;
+        try {
+            code = (int) Bindings.ENV_SET_MAXREADERS.invokeExact(ptr(), count);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
         return this;
     }
 
@@ -110,7 +136,13 @@ public final class LmdbEnv extends NativeObject {
         int bits = LmdbFlag.toBits(flags);
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment pathPtr = arena.allocateFrom(path.toString());
-            NativeCall.check(() -> (int) Bindings.ENV_OPEN.invokeExact(ptr(), pathPtr, bits, mode));
+            int code;
+            try {
+                code = (int) Bindings.ENV_OPEN.invokeExact(ptr(), pathPtr, bits, mode);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
         }
         return this;
     }
@@ -135,7 +167,13 @@ public final class LmdbEnv extends NativeObject {
     /// @param force flush unconditionally, even without [LmdbEnvFlag#NOSYNC]/[LmdbEnvFlag#MAPASYNC]
     /// @throws LmdbException if the sync fails
     public void sync(boolean force) {
-        NativeCall.check(() -> (int) Bindings.ENV_SYNC.invokeExact(ptr(), force ? 1 : 0));
+        int code;
+        try {
+            code = (int) Bindings.ENV_SYNC.invokeExact(ptr(), force ? 1 : 0);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
     }
 
     /// Statistics for the environment's unnamed database.
@@ -145,7 +183,13 @@ public final class LmdbEnv extends NativeObject {
     public LmdbStat stat() {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment stat = arena.allocate(Bindings.STAT_LAYOUT);
-            NativeCall.check(() -> (int) Bindings.ENV_STAT.invokeExact(ptr(), stat));
+            int code;
+            try {
+                code = (int) Bindings.ENV_STAT.invokeExact(ptr(), stat);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
             return LmdbStat.of(stat);
         }
     }
@@ -158,7 +202,13 @@ public final class LmdbEnv extends NativeObject {
     public LmdbEnvInfo info() {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment info = arena.allocate(Bindings.ENVINFO_LAYOUT);
-            NativeCall.check(() -> (int) Bindings.ENV_INFO.invokeExact(ptr(), info));
+            int code;
+            try {
+                code = (int) Bindings.ENV_INFO.invokeExact(ptr(), info);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
             return LmdbEnvInfo.of(info);
         }
     }

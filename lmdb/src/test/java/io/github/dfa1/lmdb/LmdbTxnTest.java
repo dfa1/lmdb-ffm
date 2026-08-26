@@ -13,7 +13,6 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.EnumSet;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -51,10 +50,10 @@ class LmdbTxnTest {
 
             // When read back in a fresh transaction
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                Optional<byte[]> result = txn.get(dbi, key("k"));
+                byte[] result = txn.get(dbi, key("k"));
 
                 // Then it returns the same bytes
-                assertThat(result).contains(value("v"));
+                assertThat(result).isEqualTo(value("v"));
             }
         }
 
@@ -70,11 +69,10 @@ class LmdbTxnTest {
 
             // When read back as a native segment
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                Optional<MemorySegment> result = txn.getSegment(dbi, key("k"));
+                MemorySegment seg = txn.getSegment(dbi, key("k"));
 
                 // Then it is a native segment with the same content
-                assertThat(result).isPresent();
-                MemorySegment seg = result.orElseThrow();
+                assertThat(seg).isNotNull();
                 assertThat(seg.isNative()).isTrue();
                 assertThat(seg.toArray(JAVA_BYTE)).isEqualTo(value("v"));
             }
@@ -91,10 +89,10 @@ class LmdbTxnTest {
 
             // When a nonexistent key is read
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                Optional<byte[]> result = txn.get(dbi, key("missing"));
+                byte[] result = txn.get(dbi, key("missing"));
 
-                // Then it is empty, not a thrown exception
-                assertThat(result).isEmpty();
+                // Then it is null, not a thrown exception
+                assertThat(result).isNull();
             }
         }
 
@@ -118,7 +116,7 @@ class LmdbTxnTest {
 
             // Then it is gone
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                assertThat(txn.get(dbi, key("k"))).isEmpty();
+                assertThat(txn.get(dbi, key("k"))).isNull();
             }
         }
 
@@ -179,11 +177,11 @@ class LmdbTxnTest {
 
             // When read back via a native key segment
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY)); Arena arena = Arena.ofConfined()) {
-                Optional<MemorySegment> result = txn.getSegment(dbi, nativeBytes(arena, "k"));
+                MemorySegment result = txn.getSegment(dbi, nativeBytes(arena, "k"));
 
                 // Then it returns the same bytes
-                assertThat(result).isPresent();
-                assertThat(result.orElseThrow().toArray(JAVA_BYTE)).isEqualTo(value("v"));
+                assertThat(result).isNotNull();
+                assertThat(result.toArray(JAVA_BYTE)).isEqualTo(value("v"));
             }
         }
 
@@ -206,7 +204,7 @@ class LmdbTxnTest {
                 assertThat(deleted).isTrue();
             }
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                assertThat(txn.get(dbi, key("k"))).isEmpty();
+                assertThat(txn.get(dbi, key("k"))).isNull();
             }
         }
 
@@ -247,11 +245,11 @@ class LmdbTxnTest {
 
             // When read back via a direct ByteBuffer key
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                Optional<MemorySegment> result = txn.getSegment(dbi, directBuffer("k"));
+                MemorySegment result = txn.getSegment(dbi, directBuffer("k"));
 
                 // Then it returns the same bytes
-                assertThat(result).isPresent();
-                assertThat(result.orElseThrow().toArray(JAVA_BYTE)).isEqualTo(value("v"));
+                assertThat(result).isNotNull();
+                assertThat(result.toArray(JAVA_BYTE)).isEqualTo(value("v"));
             }
         }
 
@@ -273,7 +271,7 @@ class LmdbTxnTest {
 
             // Then only "k" (not "xky") was stored as the key
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                assertThat(txn.get(dbi, key("k"))).contains(value("v"));
+                assertThat(txn.get(dbi, key("k"))).isEqualTo(value("v"));
             }
         }
 
@@ -295,7 +293,7 @@ class LmdbTxnTest {
                 assertThat(deleted).isTrue();
             }
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                assertThat(txn.get(dbi, key("k"))).isEmpty();
+                assertThat(txn.get(dbi, key("k"))).isNull();
             }
         }
 
@@ -333,10 +331,10 @@ class LmdbTxnTest {
 
             // When read back with a direct ByteBuffer key and a Mapper
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                Optional<String> result = txn.get(dbi, directBuffer("k"), LmdbTxnTest::decode);
+                String result = txn.get(dbi, directBuffer("k"), LmdbTxnTest::decode);
 
                 // Then the mapped result is returned
-                assertThat(result).contains("v");
+                assertThat(result).isEqualTo("v");
             }
         }
     }
@@ -356,10 +354,10 @@ class LmdbTxnTest {
 
             // When read back through a Mapper that decodes it as text
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                Optional<String> result = txn.get(dbi, key("k"), LmdbTxnTest::decode);
+                String result = txn.get(dbi, key("k"), LmdbTxnTest::decode);
 
                 // Then the mapped result is returned
-                assertThat(result).contains("v");
+                assertThat(result).isEqualTo("v");
             }
         }
 
@@ -375,10 +373,10 @@ class LmdbTxnTest {
 
             // When read back with both a native key and a Mapper
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY)); Arena arena = Arena.ofConfined()) {
-                Optional<String> result = txn.get(dbi, nativeBytes(arena, "k"), LmdbTxnTest::decode);
+                String result = txn.get(dbi, nativeBytes(arena, "k"), LmdbTxnTest::decode);
 
                 // Then the mapped result is returned
-                assertThat(result).contains("v");
+                assertThat(result).isEqualTo("v");
             }
         }
 
@@ -393,12 +391,12 @@ class LmdbTxnTest {
 
             // When read through a Mapper that would fail if ever called
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                Optional<String> result = txn.get(dbi, key("missing"), v -> {
+                String result = txn.get(dbi, key("missing"), v -> {
                     throw new AssertionError("Mapper must not run for a missing key");
                 });
 
-                // Then it is empty, and the mapper never ran
-                assertThat(result).isEmpty();
+                // Then it is null, and the mapper never ran
+                assertThat(result).isNull();
             }
         }
 
@@ -465,7 +463,7 @@ class LmdbTxnTest {
 
             // Then a later transaction sees nothing
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                assertThat(txn.get(dbi, key("k"))).isEmpty();
+                assertThat(txn.get(dbi, key("k"))).isNull();
             }
         }
 
@@ -484,7 +482,7 @@ class LmdbTxnTest {
 
             // Then the write never happened
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                assertThat(txn.get(dbi, key("k"))).isEmpty();
+                assertThat(txn.get(dbi, key("k"))).isNull();
             }
         }
 

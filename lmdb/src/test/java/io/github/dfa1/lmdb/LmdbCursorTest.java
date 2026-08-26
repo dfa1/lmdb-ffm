@@ -14,7 +14,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
@@ -53,10 +52,10 @@ class LmdbCursorTest {
             List<String> keys = new ArrayList<>();
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
                     LmdbCursor cursor = txn.openCursor(dbi)) {
-                for (Optional<LmdbCursor.Entry> e = cursor.get(LmdbCursorOp.FIRST);
-                        e.isPresent();
+                for (LmdbCursor.Entry e = cursor.get(LmdbCursorOp.FIRST);
+                        e != null;
                         e = cursor.get(LmdbCursorOp.NEXT)) {
-                    keys.add(text(e.orElseThrow().key()));
+                    keys.add(text(e.key()));
                 }
             }
 
@@ -76,10 +75,10 @@ class LmdbCursorTest {
             // When positioned at FIRST
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
                     LmdbCursor cursor = txn.openCursor(dbi)) {
-                Optional<LmdbCursor.Entry> result = cursor.get(LmdbCursorOp.FIRST);
+                LmdbCursor.Entry result = cursor.get(LmdbCursorOp.FIRST);
 
                 // Then there is nothing to find
-                assertThat(result).isEmpty();
+                assertThat(result).isNull();
             }
         }
 
@@ -97,11 +96,11 @@ class LmdbCursorTest {
             // When positioned with SET_RANGE at "b"
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
                     LmdbCursor cursor = txn.openCursor(dbi)) {
-                Optional<LmdbCursor.Entry> result = cursor.get(LmdbCursorOp.SET_RANGE, bytes("b"));
+                LmdbCursor.Entry result = cursor.get(LmdbCursorOp.SET_RANGE, bytes("b"));
 
                 // Then it lands on the next key in order, "c"
-                assertThat(result).isPresent();
-                assertThat(text(result.orElseThrow().key())).isEqualTo("c");
+                assertThat(result).isNotNull();
+                assertThat(text(result.key())).isEqualTo("c");
             }
         }
 
@@ -120,11 +119,11 @@ class LmdbCursorTest {
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
                     LmdbCursor cursor = txn.openCursor(dbi);
                     Arena arena = Arena.ofConfined()) {
-                Optional<LmdbCursor.Entry> result = cursor.get(LmdbCursorOp.SET_RANGE, nativeBytes(arena, "b"));
+                LmdbCursor.Entry result = cursor.get(LmdbCursorOp.SET_RANGE, nativeBytes(arena, "b"));
 
                 // Then it lands on the next key in order, "c"
-                assertThat(result).isPresent();
-                assertThat(text(result.orElseThrow().key())).isEqualTo("c");
+                assertThat(result).isNotNull();
+                assertThat(text(result.key())).isEqualTo("c");
             }
         }
 
@@ -142,11 +141,11 @@ class LmdbCursorTest {
             // When positioned with SET_RANGE via a direct ByteBuffer key
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
                     LmdbCursor cursor = txn.openCursor(dbi)) {
-                Optional<LmdbCursor.Entry> result = cursor.get(LmdbCursorOp.SET_RANGE, directBuffer("b"));
+                LmdbCursor.Entry result = cursor.get(LmdbCursorOp.SET_RANGE, directBuffer("b"));
 
                 // Then it lands on the next key in order, "c"
-                assertThat(result).isPresent();
-                assertThat(text(result.orElseThrow().key())).isEqualTo("c");
+                assertThat(result).isNotNull();
+                assertThat(text(result.key())).isEqualTo("c");
             }
         }
     }
@@ -170,7 +169,7 @@ class LmdbCursorTest {
                 try (LmdbCursor cursor = txn.openCursor(dbi)) {
                     // When an entry is put via the cursor, then deleted at its position
                     cursor.put(bytes("k"), bytes("v"), Set.of());
-                    assertThat(cursor.get(LmdbCursorOp.SET, bytes("k"))).isPresent();
+                    assertThat(cursor.get(LmdbCursorOp.SET, bytes("k"))).isNotNull();
 
                     cursor.delete();
                 }
@@ -179,7 +178,7 @@ class LmdbCursorTest {
 
             // Then it is gone
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                assertThat(txn.get(dbi, bytes("k"))).isEmpty();
+                assertThat(txn.get(dbi, bytes("k"))).isNull();
             }
         }
 
@@ -202,7 +201,7 @@ class LmdbCursorTest {
 
             // Then it is readable back
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                assertThat(txn.get(dbi, bytes("k"))).contains(bytes("v"));
+                assertThat(txn.get(dbi, bytes("k"))).isEqualTo(bytes("v"));
             }
         }
 
@@ -225,7 +224,7 @@ class LmdbCursorTest {
 
             // Then it is readable back
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-                assertThat(txn.get(dbi, bytes("k"))).contains(bytes("v"));
+                assertThat(txn.get(dbi, bytes("k"))).isEqualTo(bytes("v"));
             }
         }
 

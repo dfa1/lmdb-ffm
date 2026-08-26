@@ -30,7 +30,6 @@ import org.openjdk.jmh.annotations.Warmup;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.EnumSet;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
@@ -113,10 +112,10 @@ public class CursorScanBenchmark {
         long sum = 0;
         try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
                 LmdbCursor cursor = txn.openCursor(dbi)) {
-            for (Optional<LmdbCursor.Entry> e = cursor.get(LmdbCursorOp.FIRST);
-                    e.isPresent();
+            for (LmdbCursor.Entry e = cursor.get(LmdbCursorOp.FIRST);
+                    e != null;
                     e = cursor.get(LmdbCursorOp.NEXT)) {
-                sum += e.orElseThrow().data().byteSize();
+                sum += e.data().byteSize();
             }
         }
         return sum;

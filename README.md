@@ -40,9 +40,10 @@ try (LmdbEnv env = LmdbEnv.create()
     }
 
     try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-        txn.get(dbi, "key".getBytes(UTF_8))
-                .map(bytes -> new String(bytes, UTF_8))
-                .ifPresent(System.out::println); // "value"
+        byte[] value = txn.get(dbi, "key".getBytes(UTF_8)); // null if not present
+        if (value != null) {
+            System.out.println(new String(value, UTF_8)); // "value"
+        }
     }
 }
 ```
@@ -56,9 +57,9 @@ Zero-copy read, cursor iteration:
 ```java
 try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
      LmdbCursor cursor = txn.openCursor(dbi)) {
-    for (var e = cursor.get(LmdbCursorOp.FIRST); e.isPresent(); e = cursor.get(LmdbCursorOp.NEXT)) {
-        MemorySegment key = e.get().key();   // points straight into the mmap, no copy
-        MemorySegment data = e.get().data();
+    for (var e = cursor.get(LmdbCursorOp.FIRST); e != null; e = cursor.get(LmdbCursorOp.NEXT)) {
+        MemorySegment key = e.key();   // points straight into the mmap, no copy
+        MemorySegment data = e.data();
     }
 }
 ```
@@ -68,7 +69,7 @@ over to manage; the view is only valid inside the callback:
 
 ```java
 try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
-    Optional<String> value = txn.get(dbi, "key".getBytes(UTF_8),
+    String value = txn.get(dbi, "key".getBytes(UTF_8), // null if not present
             seg -> new String(seg.toArray(ValueLayout.JAVA_BYTE), UTF_8));
 }
 ```

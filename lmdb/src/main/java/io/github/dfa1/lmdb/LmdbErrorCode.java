@@ -10,7 +10,7 @@ package io.github.dfa1.lmdb;
 /// (`ENOENT`, `EACCES`, `EINVAL`, `ENOMEM`, ...) — platform-dependent and not
 /// enumerated — and maps to [#SYSTEM_ERROR]; use [LmdbException#nativeCode()]
 /// for the raw value in that case. `MDB_NOTFOUND` itself is not thrown by the
-/// read/cursor APIs — they surface it as `Optional.empty()` — but is still
+/// read/cursor APIs — they surface it as a `null` return — but is still
 /// enumerated for completeness and for APIs that pass a raw code through
 /// (e.g. [LmdbTxn#drop]'s underlying `mdb_drop` never returns it, but other
 /// paths may).

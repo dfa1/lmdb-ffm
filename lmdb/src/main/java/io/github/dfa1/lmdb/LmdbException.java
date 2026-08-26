@@ -8,7 +8,7 @@ import java.io.Serial;
 /// corrupt/full database or a programming error (e.g. an invalid handle), not
 /// a routinely-recoverable condition. `MDB_NOTFOUND` is the one common
 /// exception to "error" — it is not thrown here at all; the read/cursor APIs
-/// surface it as `Optional.empty()` instead.
+/// surface it as a `null` return instead.
 public final class LmdbException extends RuntimeException {
 
     @Serial

@@ -84,10 +84,19 @@ Built `.dylib`/`.so`/`.dll` are git-ignored; they are regenerated from the submo
 - All native handles live in `Bindings`; `size_t` maps to `JAVA_LONG` (LP64).
   LMDB return codes are `int`: `0` (`MDB_SUCCESS`) or an error — positive
   values are `errno` codes, negative values are LMDB's own `MDB_*` codes.
-  `NativeCall.checkReturnValue` throws `LmdbException` (message from
-  `mdb_strerror`) on anything but `MDB_SUCCESS`, except `MDB_NOTFOUND`, which
-  the read/cursor APIs surface as `Optional.empty()` rather than an exception
-  — a missing key is an expected outcome, not a failure.
+  `NativeCall.check(int)` throws `LmdbException` (message from `mdb_strerror`)
+  on anything but `MDB_SUCCESS`; `NativeCall.checkFound(int)` additionally
+  treats `MDB_NOTFOUND` as a normal outcome, returning `false` instead of
+  throwing — a missing key is an expected result, not a failure. Every
+  binding method inlines its own `Bindings.X.invokeExact(...)` in its own
+  `try`/`catch` rather than passing a lambda into a generic "run this call"
+  wrapper: one direct polymorphic-signature call per site is what the JIT can
+  actually inline, not one indirected through a functional interface's `run()`.
+  Read/cursor methods that can miss (`get`, `getSegment`, `LmdbCursor#get`)
+  return the result directly and use `null` for "not present" — not
+  `Optional` — since this is a hot path where the extra box has a real cost;
+  `Mapper.map` forbids a `null` result precisely so the wrapping `get(...,
+  Mapper)` can reuse the same `null`-means-absent convention unambiguously.
 - Native structs (`MDB_val`, `MDB_stat`, `MDB_envinfo`): model the layout as a
   named `StructLayout` and access fields through `static final VarHandle`s
   from it (`LAYOUT.varHandle(groupElement("…"))`), deriving size from

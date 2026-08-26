@@ -26,7 +26,6 @@ import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.EnumSet;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -129,17 +128,17 @@ public class GetBenchmark {
     }
 
     @Benchmark
-    public Optional<byte[]> lmdbJavaBytes() {
+    public byte[] lmdbJavaBytes() {
         return readTxn.get(dbi, nextKey());
     }
 
     @Benchmark
-    public Optional<MemorySegment> lmdbJavaSegment() {
+    public MemorySegment lmdbJavaSegment() {
         return readTxn.getSegment(dbi, nextKey());
     }
 
     @Benchmark
-    public Optional<Long> lmdbJavaMapper() {
+    public Long lmdbJavaMapper() {
         return readTxn.get(dbi, nextKey(), MemorySegment::byteSize);
     }
 

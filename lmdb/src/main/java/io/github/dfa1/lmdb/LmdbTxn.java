@@ -4,8 +4,10 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
+
+import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_INT;
 
 /// A transaction — wraps `MDB_txn*`. All reads and writes go through one.
 ///
@@ -38,9 +40,15 @@ public final class LmdbTxn extends NativeObject {
     static LmdbTxn begin(LmdbEnv env, LmdbTxn parent, int flags) {
         MemorySegment parentPtr = parent == null ? MemorySegment.NULL : parent.ptr();
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment ptr = NativeCall.createHandle(arena,
-                    out -> (int) Bindings.TXN_BEGIN.invokeExact(env.ptr(), parentPtr, flags, out));
-            return new LmdbTxn(ptr, env);
+            MemorySegment out = arena.allocate(ADDRESS);
+            int code;
+            try {
+                code = (int) Bindings.TXN_BEGIN.invokeExact(env.ptr(), parentPtr, flags, out);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+            return new LmdbTxn(out.get(ADDRESS, 0), env);
         }
     }
 
@@ -57,7 +65,13 @@ public final class LmdbTxn extends NativeObject {
     /// @throws IllegalStateException if this transaction already ended
     public void commit() {
         MemorySegment p = take();
-        NativeCall.check(() -> (int) Bindings.TXN_COMMIT.invokeExact(p));
+        int code;
+        try {
+            code = (int) Bindings.TXN_COMMIT.invokeExact(p);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
     }
 
     /// Aborts this transaction, discarding its writes (a read-only transaction
@@ -97,9 +111,15 @@ public final class LmdbTxn extends NativeObject {
         int bits = LmdbFlag.toBits(flags);
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment namePtr = name == null ? MemorySegment.NULL : arena.allocateFrom(name);
-            int dbi = NativeCall.createIntHandle(arena,
-                    out -> (int) Bindings.DBI_OPEN.invokeExact(ptr(), namePtr, bits, out));
-            return new LmdbDbi(dbi);
+            MemorySegment out = arena.allocate(JAVA_INT);
+            int code;
+            try {
+                code = (int) Bindings.DBI_OPEN.invokeExact(ptr(), namePtr, bits, out);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+            return new LmdbDbi(out.get(JAVA_INT, 0));
         }
     }
 
@@ -110,7 +130,13 @@ public final class LmdbTxn extends NativeObject {
     /// @throws LmdbException if the drop fails
     public void drop(LmdbDbi dbi, boolean delete) {
         Objects.requireNonNull(dbi, "dbi");
-        NativeCall.check(() -> (int) Bindings.DROP.invokeExact(ptr(), dbi.handle(), delete ? 1 : 0));
+        int code;
+        try {
+            code = (int) Bindings.DROP.invokeExact(ptr(), dbi.handle(), delete ? 1 : 0);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
     }
 
     /// Statistics for `dbi`.
@@ -122,7 +148,13 @@ public final class LmdbTxn extends NativeObject {
         Objects.requireNonNull(dbi, "dbi");
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment stat = arena.allocate(Bindings.STAT_LAYOUT);
-            NativeCall.check(() -> (int) Bindings.STAT.invokeExact(ptr(), dbi.handle(), stat));
+            int code;
+            try {
+                code = (int) Bindings.STAT.invokeExact(ptr(), dbi.handle(), stat);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
             return LmdbStat.of(stat);
         }
     }
@@ -135,15 +167,15 @@ public final class LmdbTxn extends NativeObject {
     ///
     /// @param dbi the database to read from
     /// @param key the key to look up
-    /// @return the stored data, or empty if `key` is not present
+    /// @return the stored data, or `null` if `key` is not present
     /// @throws LmdbException if the native call fails
-    public Optional<MemorySegment> getSegment(LmdbDbi dbi, byte[] key) {
+    public MemorySegment getSegment(LmdbDbi dbi, byte[] key) {
         Objects.requireNonNull(dbi, "dbi");
         Objects.requireNonNull(key, "key");
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.allocate(arena);
-            return getInto(dbi, keyVal, dataVal) ? Optional.of(LmdbVal.data(dataVal)) : Optional.empty();
+            return getInto(dbi, keyVal, dataVal) ? LmdbVal.data(dataVal) : null;
         }
     }
 
@@ -154,15 +186,15 @@ public final class LmdbTxn extends NativeObject {
     /// @param dbi the database to read from
     /// @param key native key bytes to look up (copied into a temporary
     ///            `MDB_val`; not retained after this call)
-    /// @return the stored data, or empty if `key` is not present
+    /// @return the stored data, or `null` if `key` is not present
     /// @throws LmdbException if the native call fails
-    public Optional<MemorySegment> getSegment(LmdbDbi dbi, MemorySegment key) {
+    public MemorySegment getSegment(LmdbDbi dbi, MemorySegment key) {
         Objects.requireNonNull(dbi, "dbi");
         NativeCall.requireNative(key, "key");
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.allocate(arena);
-            return getInto(dbi, keyVal, dataVal) ? Optional.of(LmdbVal.data(dataVal)) : Optional.empty();
+            return getInto(dbi, keyVal, dataVal) ? LmdbVal.data(dataVal) : null;
         }
     }
 
@@ -173,9 +205,9 @@ public final class LmdbTxn extends NativeObject {
     ///
     /// @param dbi the database to read from
     /// @param key native key bytes to look up, as a direct buffer's remaining content
-    /// @return the stored data, or empty if `key` is not present
+    /// @return the stored data, or `null` if `key` is not present
     /// @throws LmdbException if the native call fails
-    public Optional<MemorySegment> getSegment(LmdbDbi dbi, ByteBuffer key) {
+    public MemorySegment getSegment(LmdbDbi dbi, ByteBuffer key) {
         Objects.requireNonNull(key, "key");
         return getSegment(dbi, MemorySegment.ofBuffer(key));
     }
@@ -185,15 +217,15 @@ public final class LmdbTxn extends NativeObject {
     ///
     /// @param dbi the database to read from
     /// @param key the key to look up
-    /// @return the stored data, or empty if `key` is not present
+    /// @return the stored data, or `null` if `key` is not present
     /// @throws LmdbException if the native call fails
-    public Optional<byte[]> get(LmdbDbi dbi, byte[] key) {
+    public byte[] get(LmdbDbi dbi, byte[] key) {
         Objects.requireNonNull(dbi, "dbi");
         Objects.requireNonNull(key, "key");
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.allocate(arena);
-            return getInto(dbi, keyVal, dataVal) ? Optional.of(LmdbVal.toByteArray(dataVal)) : Optional.empty();
+            return getInto(dbi, keyVal, dataVal) ? LmdbVal.toByteArray(dataVal) : null;
         }
     }
 
@@ -208,19 +240,16 @@ public final class LmdbTxn extends NativeObject {
     /// @param dbi    the database to read from
     /// @param key    the key to look up
     /// @param mapper callback invoked with a zero-copy view of the stored value
-    /// @return the mapped result, or empty if `key` is not present
+    /// @return the mapped result, or `null` if `key` is not present
     /// @throws LmdbException if the native call fails
-    public <R> Optional<R> get(LmdbDbi dbi, byte[] key, Mapper<R> mapper) {
+    public <R> R get(LmdbDbi dbi, byte[] key, Mapper<R> mapper) {
         Objects.requireNonNull(dbi, "dbi");
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(mapper, "mapper");
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.allocate(arena);
-            if (!getInto(dbi, keyVal, dataVal)) {
-                return Optional.empty();
-            }
-            return Optional.of(mapValue(arena, dataVal, mapper));
+            return getInto(dbi, keyVal, dataVal) ? mapValue(arena, dataVal, mapper) : null;
         }
     }
 
@@ -231,19 +260,16 @@ public final class LmdbTxn extends NativeObject {
     /// @param key    native key bytes to look up (copied into a temporary
     ///               `MDB_val`; not retained after this call)
     /// @param mapper callback invoked with a zero-copy view of the stored value
-    /// @return the mapped result, or empty if `key` is not present
+    /// @return the mapped result, or `null` if `key` is not present
     /// @throws LmdbException if the native call fails
-    public <R> Optional<R> get(LmdbDbi dbi, MemorySegment key, Mapper<R> mapper) {
+    public <R> R get(LmdbDbi dbi, MemorySegment key, Mapper<R> mapper) {
         Objects.requireNonNull(dbi, "dbi");
         NativeCall.requireNative(key, "key");
         Objects.requireNonNull(mapper, "mapper");
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.allocate(arena);
-            if (!getInto(dbi, keyVal, dataVal)) {
-                return Optional.empty();
-            }
-            return Optional.of(mapValue(arena, dataVal, mapper));
+            return getInto(dbi, keyVal, dataVal) ? mapValue(arena, dataVal, mapper) : null;
         }
     }
 
@@ -254,9 +280,9 @@ public final class LmdbTxn extends NativeObject {
     /// @param dbi    the database to read from
     /// @param key    native key bytes to look up, as a direct buffer's remaining content
     /// @param mapper callback invoked with a zero-copy view of the stored value
-    /// @return the mapped result, or empty if `key` is not present
+    /// @return the mapped result, or `null` if `key` is not present
     /// @throws LmdbException if the native call fails
-    public <R> Optional<R> get(LmdbDbi dbi, ByteBuffer key, Mapper<R> mapper) {
+    public <R> R get(LmdbDbi dbi, ByteBuffer key, Mapper<R> mapper) {
         Objects.requireNonNull(key, "key");
         return get(dbi, MemorySegment.ofBuffer(key), mapper);
     }
@@ -267,7 +293,13 @@ public final class LmdbTxn extends NativeObject {
     }
 
     private boolean getInto(LmdbDbi dbi, MemorySegment keyVal, MemorySegment dataVal) {
-        return NativeCall.checkFound(() -> (int) Bindings.GET.invokeExact(ptr(), dbi.handle(), keyVal, dataVal));
+        int code;
+        try {
+            code = (int) Bindings.GET.invokeExact(ptr(), dbi.handle(), keyVal, dataVal);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        return NativeCall.checkFound(code);
     }
 
     /// Stores `data` under `key` in `dbi`.
@@ -288,7 +320,13 @@ public final class LmdbTxn extends NativeObject {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.of(arena, data);
-            NativeCall.check(() -> (int) Bindings.PUT.invokeExact(ptr(), dbi.handle(), keyVal, dataVal, bits));
+            int code;
+            try {
+                code = (int) Bindings.PUT.invokeExact(ptr(), dbi.handle(), keyVal, dataVal, bits);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
         }
     }
 
@@ -311,7 +349,13 @@ public final class LmdbTxn extends NativeObject {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.of(arena, data);
-            NativeCall.check(() -> (int) Bindings.PUT.invokeExact(ptr(), dbi.handle(), keyVal, dataVal, bits));
+            int code;
+            try {
+                code = (int) Bindings.PUT.invokeExact(ptr(), dbi.handle(), keyVal, dataVal, bits);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
         }
     }
 
@@ -342,8 +386,13 @@ public final class LmdbTxn extends NativeObject {
         Objects.requireNonNull(key, "key");
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
-            return NativeCall.checkFound(() ->
-                    (int) Bindings.DEL.invokeExact(ptr(), dbi.handle(), keyVal, MemorySegment.NULL));
+            int code;
+            try {
+                code = (int) Bindings.DEL.invokeExact(ptr(), dbi.handle(), keyVal, MemorySegment.NULL);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            return NativeCall.checkFound(code);
         }
     }
 
@@ -359,8 +408,13 @@ public final class LmdbTxn extends NativeObject {
         NativeCall.requireNative(key, "key");
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
-            return NativeCall.checkFound(() ->
-                    (int) Bindings.DEL.invokeExact(ptr(), dbi.handle(), keyVal, MemorySegment.NULL));
+            int code;
+            try {
+                code = (int) Bindings.DEL.invokeExact(ptr(), dbi.handle(), keyVal, MemorySegment.NULL);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            return NativeCall.checkFound(code);
         }
     }
 
@@ -390,7 +444,13 @@ public final class LmdbTxn extends NativeObject {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.of(arena, data);
-            return NativeCall.checkFound(() -> (int) Bindings.DEL.invokeExact(ptr(), dbi.handle(), keyVal, dataVal));
+            int code;
+            try {
+                code = (int) Bindings.DEL.invokeExact(ptr(), dbi.handle(), keyVal, dataVal);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            return NativeCall.checkFound(code);
         }
     }
 
@@ -408,7 +468,13 @@ public final class LmdbTxn extends NativeObject {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.of(arena, data);
-            return NativeCall.checkFound(() -> (int) Bindings.DEL.invokeExact(ptr(), dbi.handle(), keyVal, dataVal));
+            int code;
+            try {
+                code = (int) Bindings.DEL.invokeExact(ptr(), dbi.handle(), keyVal, dataVal);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            return NativeCall.checkFound(code);
         }
     }
 

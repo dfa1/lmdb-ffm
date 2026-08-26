@@ -4,9 +4,9 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 
+import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 /// A cursor for navigating a database within a transaction — wraps `MDB_cursor*`.
@@ -23,10 +23,8 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 /// {@snippet :
 /// try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
 ///      LmdbCursor cursor = txn.openCursor(dbi)) {
-///     for (Optional<LmdbCursor.Entry> e = cursor.get(LmdbCursorOp.FIRST);
-///             e.isPresent();
-///             e = cursor.get(LmdbCursorOp.NEXT)) {
-///         System.out.println(e.get().key());
+///     for (LmdbCursor.Entry e = cursor.get(LmdbCursorOp.FIRST); e != null; e = cursor.get(LmdbCursorOp.NEXT)) {
+///         System.out.println(e.key());
 ///     }
 /// }
 /// }
@@ -59,9 +57,15 @@ public final class LmdbCursor extends NativeObject {
 
     static LmdbCursor open(LmdbTxn txn, LmdbDbi dbi) {
         try (Arena scratch = Arena.ofConfined()) {
-            MemorySegment ptr = NativeCall.createHandle(scratch,
-                    out -> (int) Bindings.CURSOR_OPEN.invokeExact(txn.ptr(), dbi.handle(), out));
-            return new LmdbCursor(ptr);
+            MemorySegment out = scratch.allocate(ADDRESS);
+            int code;
+            try {
+                code = (int) Bindings.CURSOR_OPEN.invokeExact(txn.ptr(), dbi.handle(), out);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+            return new LmdbCursor(out.get(ADDRESS, 0));
         }
     }
 
@@ -70,13 +74,17 @@ public final class LmdbCursor extends NativeObject {
     /// and returns the entry found there.
     ///
     /// @param op the positioning operation
-    /// @return the key/data pair at the new position, or empty if there isn't one
+    /// @return the key/data pair at the new position, or `null` if there isn't one
     /// @throws LmdbException if the native call fails
-    public Optional<Entry> get(LmdbCursorOp op) {
+    public Entry get(LmdbCursorOp op) {
         Objects.requireNonNull(op, "op");
-        boolean found = NativeCall.checkFound(() ->
-                (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value()));
-        return found ? Optional.of(new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal))) : Optional.empty();
+        int code;
+        try {
+            code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        return NativeCall.checkFound(code) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
     }
 
     /// Positions this cursor per `op` (one that takes a key input, such as
@@ -85,17 +93,21 @@ public final class LmdbCursor extends NativeObject {
     ///
     /// @param op  the positioning operation
     /// @param key the key to search for
-    /// @return the key/data pair at the new position, or empty if there isn't one
+    /// @return the key/data pair at the new position, or `null` if there isn't one
     /// @throws LmdbException if the native call fails
-    public Optional<Entry> get(LmdbCursorOp op, byte[] key) {
+    public Entry get(LmdbCursorOp op, byte[] key) {
         Objects.requireNonNull(op, "op");
         Objects.requireNonNull(key, "key");
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment keyVal = LmdbVal.of(arena, key);
-            MemorySegment dataVal = LmdbVal.allocate(arena);
-            boolean found = NativeCall.checkFound(() ->
-                    (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value()));
-            return found ? Optional.of(new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal))) : Optional.empty();
+        try (Arena scratch = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(scratch, key);
+            MemorySegment dataVal = LmdbVal.allocate(scratch);
+            int code;
+            try {
+                code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            return NativeCall.checkFound(code) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
         }
     }
 
@@ -104,17 +116,21 @@ public final class LmdbCursor extends NativeObject {
     /// @param op  the positioning operation
     /// @param key native key bytes to search for (copied into a temporary
     ///            `MDB_val`; not retained after this call)
-    /// @return the key/data pair at the new position, or empty if there isn't one
+    /// @return the key/data pair at the new position, or `null` if there isn't one
     /// @throws LmdbException if the native call fails
-    public Optional<Entry> get(LmdbCursorOp op, MemorySegment key) {
+    public Entry get(LmdbCursorOp op, MemorySegment key) {
         Objects.requireNonNull(op, "op");
         NativeCall.requireNative(key, "key");
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment keyVal = LmdbVal.of(arena, key);
-            MemorySegment dataVal = LmdbVal.allocate(arena);
-            boolean found = NativeCall.checkFound(() ->
-                    (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value()));
-            return found ? Optional.of(new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal))) : Optional.empty();
+        try (Arena scratch = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(scratch, key);
+            MemorySegment dataVal = LmdbVal.allocate(scratch);
+            int code;
+            try {
+                code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            return NativeCall.checkFound(code) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
         }
     }
 
@@ -125,9 +141,9 @@ public final class LmdbCursor extends NativeObject {
     ///
     /// @param op  the positioning operation
     /// @param key native key bytes to search for, as a direct buffer's remaining content
-    /// @return the key/data pair at the new position, or empty if there isn't one
+    /// @return the key/data pair at the new position, or `null` if there isn't one
     /// @throws LmdbException if the native call fails
-    public Optional<Entry> get(LmdbCursorOp op, ByteBuffer key) {
+    public Entry get(LmdbCursorOp op, ByteBuffer key) {
         Objects.requireNonNull(key, "key");
         return get(op, MemorySegment.ofBuffer(key));
     }
@@ -145,10 +161,16 @@ public final class LmdbCursor extends NativeObject {
         Objects.requireNonNull(data, "data");
         Objects.requireNonNull(flags, "flags");
         int bits = LmdbFlag.toBits(flags);
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment keyVal = LmdbVal.of(arena, key);
-            MemorySegment dataVal = LmdbVal.of(arena, data);
-            NativeCall.check(() -> (int) Bindings.CURSOR_PUT.invokeExact(ptr(), keyVal, dataVal, bits));
+        try (Arena scratch = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(scratch, key);
+            MemorySegment dataVal = LmdbVal.of(scratch, data);
+            int code;
+            try {
+                code = (int) Bindings.CURSOR_PUT.invokeExact(ptr(), keyVal, dataVal, bits);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
         }
     }
 
@@ -163,10 +185,16 @@ public final class LmdbCursor extends NativeObject {
         NativeCall.requireNative(data, "data");
         Objects.requireNonNull(flags, "flags");
         int bits = LmdbFlag.toBits(flags);
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment keyVal = LmdbVal.of(arena, key);
-            MemorySegment dataVal = LmdbVal.of(arena, data);
-            NativeCall.check(() -> (int) Bindings.CURSOR_PUT.invokeExact(ptr(), keyVal, dataVal, bits));
+        try (Arena scratch = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(scratch, key);
+            MemorySegment dataVal = LmdbVal.of(scratch, data);
+            int code;
+            try {
+                code = (int) Bindings.CURSOR_PUT.invokeExact(ptr(), keyVal, dataVal, bits);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
         }
     }
 
@@ -188,7 +216,13 @@ public final class LmdbCursor extends NativeObject {
     ///
     /// @throws LmdbException if the delete fails
     public void delete() {
-        NativeCall.check(() -> (int) Bindings.CURSOR_DEL.invokeExact(ptr(), 0));
+        int code;
+        try {
+            code = (int) Bindings.CURSOR_DEL.invokeExact(ptr(), 0);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
     }
 
     /// The number of duplicate data items for the current key (`MDB_DUPSORT`
@@ -197,9 +231,15 @@ public final class LmdbCursor extends NativeObject {
     /// @return the duplicate count at the current position
     /// @throws LmdbException if the native call fails
     public long count() {
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment countPtr = arena.allocate(JAVA_LONG);
-            NativeCall.check(() -> (int) Bindings.CURSOR_COUNT.invokeExact(ptr(), countPtr));
+        try (Arena scratch = Arena.ofConfined()) {
+            MemorySegment countPtr = scratch.allocate(JAVA_LONG);
+            int code;
+            try {
+                code = (int) Bindings.CURSOR_COUNT.invokeExact(ptr(), countPtr);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
             return countPtr.get(JAVA_LONG, 0L);
         }
     }
