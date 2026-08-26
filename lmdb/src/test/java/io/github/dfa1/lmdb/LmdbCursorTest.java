@@ -284,6 +284,48 @@ class LmdbCursorTest {
     }
 
     @Nested
+    class Renew {
+
+        @Test
+        void renewReassociatesTheCursorWithAFreshReadOnlyTransaction() {
+            // Given a key committed, and a cursor opened on a read-only transaction
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, bytes("k"), bytes("v"), Set.of());
+                txn.commit();
+            }
+
+            LmdbTxn firstTxn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+            LmdbCursor cursor = firstTxn.openCursor(dbi);
+            assertThat(cursor.get(LmdbCursorOp.SET, bytes("k"))).isNotNull();
+
+            // The first transaction ends (a read-only abort/close does not free its
+            // cursors — only a write transaction's commit does) before the second
+            // begins: one thread can only hold one read-only transaction at a time,
+            // and this is also the documented interesting case for renew — "may be
+            // done whether the previous transaction is live or dead."
+            firstTxn.close();
+
+            // When the now-orphaned cursor is renewed onto a fresh read-only transaction
+            try (LmdbTxn secondTxn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                cursor.renew(secondTxn);
+
+                // Then it reads through the new transaction
+                LmdbCursor.Entry result = cursor.get(LmdbCursorOp.SET, bytes("k"));
+                assertThat(result).isNotNull();
+                assertThat(text(result.data())).isEqualTo("v");
+
+                // The cursor must close before secondTxn does — using one after its
+                // transaction has ended (without a further renew) is undefined
+                // behavior, not a catchable exception, exactly like the
+                // commit/cursor-close hazard documented on LmdbCursor itself.
+                cursor.close();
+            }
+        }
+    }
+
+    @Nested
     class Mutation {
 
         @Test

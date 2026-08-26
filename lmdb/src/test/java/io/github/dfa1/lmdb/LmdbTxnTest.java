@@ -623,6 +623,90 @@ class LmdbTxnTest {
         }
     }
 
+    @Nested
+    class ResetRenewPrepare {
+
+        @Test
+        void resetThenRenewAllowsContinuedReading() {
+            // Given a value put and committed
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
+                txn.commit();
+            }
+
+            // When a read-only transaction reads, is reset, then renewed
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                assertThat(txn.get(dbi, key("k"))).isEqualTo(value("v"));
+
+                txn.reset();
+                txn.renew();
+
+                // Then it can read again as if nothing happened
+                assertThat(txn.get(dbi, key("k"))).isEqualTo(value("v"));
+            }
+        }
+
+        @Test
+        void resetOnAnEndedTransactionFails() {
+            // Given a committed transaction
+            LmdbTxn sut = env.beginTxn();
+            sut.commit();
+
+            // When reset
+            ThrowingCallable result = sut::reset;
+
+            // Then it fails fast rather than touching a freed native pointer
+            assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void renewOnAnEndedTransactionFails() {
+            // Given a committed transaction
+            LmdbTxn sut = env.beginTxn();
+            sut.commit();
+
+            // When renewed
+            ThrowingCallable result = sut::renew;
+
+            // Then it fails fast rather than touching a freed native pointer
+            assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void prepareThenCommitPersistsTheWrite() {
+            // Given a write transaction with a pending put
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
+
+                // When prepared, then committed
+                txn.prepare();
+                txn.commit();
+            }
+
+            // Then the write is visible afterward
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                assertThat(txn.get(dbi, key("k"))).isEqualTo(value("v"));
+            }
+        }
+
+        @Test
+        void prepareOnAnEndedTransactionFails() {
+            // Given a committed transaction
+            LmdbTxn sut = env.beginTxn();
+            sut.commit();
+
+            // When prepared
+            ThrowingCallable result = sut::prepare;
+
+            // Then it fails fast rather than touching a freed native pointer
+            assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+        }
+    }
+
     private static byte[] key(String s) {
         return s.getBytes(StandardCharsets.UTF_8);
     }

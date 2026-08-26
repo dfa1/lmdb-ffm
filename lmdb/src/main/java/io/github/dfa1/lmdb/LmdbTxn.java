@@ -66,6 +66,24 @@ public final class LmdbTxn extends NativeObject {
         }
     }
 
+    /// Prepares this transaction for a two-phase commit protocol: persists
+    /// all writes to storage, but does not perform the final metapage
+    /// update. Every cursor on this transaction is closed by this call. Only
+    /// [#commit()] or [#abort()] are valid afterward — this does not end the
+    /// transaction's lifecycle itself.
+    ///
+    /// @throws LmdbException         if the prepare fails
+    /// @throws IllegalStateException if this transaction already ended
+    public void prepare() {
+        int code;
+        try {
+            code = (int) Bindings.TXN_PREPARE.invokeExact(ptr());
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
+    }
+
     /// Commits this transaction, making its writes durable (subject to the
     /// environment's sync flags) and ending it. Ends this object's lifecycle —
     /// [#ptr()], a further [#commit()]/[#abort()], and any read/write method
@@ -108,6 +126,44 @@ public final class LmdbTxn extends NativeObject {
         } finally {
             arena.close();
         }
+    }
+
+    /// Resets this non-nested, read-only transaction: releases its reader
+    /// lock like [#abort()], but keeps the handle alive for [#renew()] —
+    /// cheaper than a fresh [LmdbEnv#beginTxn(Set)] when the caller will
+    /// start another read-only transaction soon. Does not end this object's
+    /// lifecycle the way [#commit()]/[#abort()] do.
+    ///
+    /// Only [#renew()] is valid on this transaction until it is renewed;
+    /// every cursor opened on it must not be used again either, except via
+    /// [LmdbCursor#renew(LmdbTxn)]. Neither is enforced here — LMDB's own C
+    /// API does not enforce it either, so misuse is undefined behavior, not
+    /// a catchable exception, exactly like using a [LmdbCursor] after its
+    /// transaction commits (see [LmdbCursor]'s class documentation).
+    ///
+    /// @throws IllegalStateException if this transaction already ended
+    public void reset() {
+        try {
+            Bindings.TXN_RESET.invokeExact(ptr());
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+    }
+
+    /// Re-acquires a reader lock for a transaction previously [#reset()],
+    /// making it usable again. Must be called before any other use of this
+    /// transaction (or a cursor opened on it).
+    ///
+    /// @throws LmdbException         if the renew fails
+    /// @throws IllegalStateException if this transaction already ended
+    public void renew() {
+        int code;
+        try {
+            code = (int) Bindings.TXN_RENEW.invokeExact(ptr());
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
     }
 
     /// Opens the environment's unnamed database.

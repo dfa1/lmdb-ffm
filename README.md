@@ -96,21 +96,20 @@ for the build.
 
 ## API coverage
 
-29 of `lmdb.h`'s 65 `mdb_*` functions are bound today:
+33 of `lmdb.h`'s 65 `mdb_*` functions are bound today:
 
 | Area | Bound |
 |---|---|
 | Environment | `mdb_env_create`, `mdb_env_open`, `mdb_env_close`, `mdb_env_set_mapsize`, `mdb_env_set_maxdbs`, `mdb_env_set_maxreaders`, `mdb_env_get_maxkeysize`, `mdb_env_sync`, `mdb_env_stat`, `mdb_env_info`, `mdb_env_copy2` |
-| Transactions | `mdb_txn_begin`, `mdb_txn_commit`, `mdb_txn_abort` |
+| Transactions | `mdb_txn_begin`, `mdb_txn_commit`, `mdb_txn_abort`, `mdb_txn_prepare`, `mdb_txn_reset`, `mdb_txn_renew` |
 | Databases | `mdb_dbi_open`, `mdb_dbi_close`, `mdb_drop` |
 | Data access | `mdb_get`, `mdb_put`, `mdb_del`, `mdb_stat` |
-| Cursors | `mdb_cursor_open`, `mdb_cursor_close`, `mdb_cursor_get`, `mdb_cursor_put`, `mdb_cursor_del`, `mdb_cursor_count` |
+| Cursors | `mdb_cursor_open`, `mdb_cursor_close`, `mdb_cursor_get`, `mdb_cursor_put`, `mdb_cursor_del`, `mdb_cursor_count`, `mdb_cursor_renew` |
 | Misc | `mdb_version`, `mdb_strerror` |
 
-Not yet bound (36), in three very different categories:
+Not yet bound (32), in three very different categories:
 
 **Plain data in/out — straightforward to add, just not needed yet:**
-`mdb_txn_reset`, `mdb_txn_renew`, `mdb_txn_prepare`, `mdb_cursor_renew`,
 `mdb_cursor_is_db`, `mdb_reader_check`, `mdb_reader_list`, `mdb_dbi_flags`,
 `mdb_txn_flags`, `mdb_env_get_flags`, `mdb_env_get_path`, `mdb_env_get_fd`,
 `mdb_env_get_maxreaders`, `mdb_env_set_flags`, `mdb_env_set_pagesize`,

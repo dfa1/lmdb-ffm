@@ -75,6 +75,26 @@ public final class LmdbCursor extends NativeObject {
         }
     }
 
+    /// Re-associates this cursor — only ever valid on a read-only
+    /// transaction — with `txn`, reusing it rather than opening a fresh
+    /// cursor. `txn` must reference the same database this cursor was
+    /// opened with; the transaction this cursor was previously on may be
+    /// live or already ended ([LmdbTxn#reset()], [LmdbTxn#abort()], or even
+    /// [LmdbTxn#commit()]).
+    ///
+    /// @param txn the (read-only) transaction to associate this cursor with
+    /// @throws LmdbException if the renew fails
+    public void renew(LmdbTxn txn) {
+        Objects.requireNonNull(txn, "txn");
+        int code;
+        try {
+            code = (int) Bindings.CURSOR_RENEW.invokeExact(txn.ptr(), ptr());
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
+    }
+
     /// Positions this cursor per `op` (one with no explicit key/data input,
     /// such as [LmdbCursorOp#FIRST], [LmdbCursorOp#LAST] or [LmdbCursorOp#NEXT])
     /// and returns the entry found there.

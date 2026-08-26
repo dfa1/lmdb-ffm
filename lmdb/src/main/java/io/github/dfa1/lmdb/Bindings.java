@@ -104,6 +104,15 @@ final class Bindings {
     // void mdb_txn_abort(MDB_txn *txn)
     static final MethodHandle TXN_ABORT =
             NativeLibrary.lookup("mdb_txn_abort", FunctionDescriptor.ofVoid(ADDRESS));
+    // int mdb_txn_prepare(MDB_txn *txn)
+    static final MethodHandle TXN_PREPARE =
+            NativeLibrary.lookup("mdb_txn_prepare", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    // void mdb_txn_reset(MDB_txn *txn)
+    static final MethodHandle TXN_RESET =
+            NativeLibrary.lookup("mdb_txn_reset", FunctionDescriptor.ofVoid(ADDRESS));
+    // int mdb_txn_renew(MDB_txn *txn)
+    static final MethodHandle TXN_RENEW =
+            NativeLibrary.lookup("mdb_txn_renew", FunctionDescriptor.of(JAVA_INT, ADDRESS));
 
     // --- databases ---
 
@@ -154,6 +163,9 @@ final class Bindings {
     // void mdb_cursor_close(MDB_cursor *cursor)
     static final MethodHandle CURSOR_CLOSE =
             NativeLibrary.lookup("mdb_cursor_close", FunctionDescriptor.ofVoid(ADDRESS));
+    // int mdb_cursor_renew(MDB_txn *txn, MDB_cursor *cursor)
+    static final MethodHandle CURSOR_RENEW =
+            NativeLibrary.lookup("mdb_cursor_renew", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
     // int mdb_cursor_get(MDB_cursor *cursor, MDB_val *key, MDB_val *data, MDB_cursor_op op)
     //
     // Linker.Option.critical(false): every downcall normally pays a JVM
