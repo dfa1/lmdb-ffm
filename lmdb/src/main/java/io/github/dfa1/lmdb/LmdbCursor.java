@@ -150,6 +150,82 @@ public final class LmdbCursor extends NativeObject {
         return get(op, MemorySegment.ofBuffer(key));
     }
 
+    /// [#get(LmdbCursorOp)], without the key-segment construction that call
+    /// pays even when the key is never touched — the shape a whole-database
+    /// value-only scan (`FIRST`/`NEXT`/`LAST`/`PREV`) needs.
+    ///
+    /// @param op the positioning operation
+    /// @return the value at the new position, or `null` if there isn't one
+    /// @throws LmdbException if the native call fails
+    public MemorySegment getValue(LmdbCursorOp op) {
+        Objects.requireNonNull(op, "op");
+        int code;
+        try {
+            code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        return NativeCall.checkFound(code) ? LmdbVal.data(dataVal) : null;
+    }
+
+    /// [#get(LmdbCursorOp, byte[])], without the key-segment construction —
+    /// for a caller who already knows `key` and only wants the value back.
+    /// Discards whatever key LMDB actually matched; use
+    /// [#get(LmdbCursorOp, byte[])] instead if that matters (e.g.
+    /// [LmdbCursorOp#SET_RANGE], where the matched key can differ from `key`).
+    ///
+    /// @param op  the positioning operation
+    /// @param key the key to search for
+    /// @return the value at the new position, or `null` if there isn't one
+    /// @throws LmdbException if the native call fails
+    public MemorySegment getValue(LmdbCursorOp op, byte[] key) {
+        Objects.requireNonNull(op, "op");
+        Objects.requireNonNull(key, "key");
+        keyBuffer = LmdbVal.growBuffer(arena, keyBuffer, Math.max(key.length, 1));
+        MemorySegment.copy(key, 0, keyBuffer, JAVA_BYTE, 0, key.length);
+        LmdbVal.set(keyVal, keyBuffer.asSlice(0, key.length));
+        int code;
+        try {
+            code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        return NativeCall.checkFound(code) ? LmdbVal.data(dataVal) : null;
+    }
+
+    /// [#getValue(LmdbCursorOp, byte[])] with a zero-copy key.
+    ///
+    /// @param op  the positioning operation
+    /// @param key native key bytes to search for (copied into a temporary
+    ///            `MDB_val`; not retained after this call)
+    /// @return the value at the new position, or `null` if there isn't one
+    /// @throws LmdbException if the native call fails
+    public MemorySegment getValue(LmdbCursorOp op, MemorySegment key) {
+        Objects.requireNonNull(op, "op");
+        NativeCall.requireNative(key, "key");
+        LmdbVal.set(keyVal, key);
+        int code;
+        try {
+            code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        return NativeCall.checkFound(code) ? LmdbVal.data(dataVal) : null;
+    }
+
+    /// [#getValue(LmdbCursorOp, MemorySegment)] for a direct [ByteBuffer] key
+    /// — see [#get(LmdbCursorOp, ByteBuffer)] for the key-range/heap-buffer
+    /// caveats.
+    ///
+    /// @param op  the positioning operation
+    /// @param key native key bytes to search for, as a direct buffer's remaining content
+    /// @return the value at the new position, or `null` if there isn't one
+    /// @throws LmdbException if the native call fails
+    public MemorySegment getValue(LmdbCursorOp op, ByteBuffer key) {
+        Objects.requireNonNull(key, "key");
+        return getValue(op, MemorySegment.ofBuffer(key));
+    }
+
     /// Stores `data` under `key` at this cursor's current database, per `flags`
     /// (e.g. `EnumSet.of(LmdbWriteFlag.CURRENT)` to overwrite the entry at the
     /// cursor's current position).

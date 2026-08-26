@@ -151,6 +151,139 @@ class LmdbCursorTest {
     }
 
     @Nested
+    class ValueOnly {
+
+        @Test
+        void getValueWalksTheSameEntriesAsGetWithoutTheKey() {
+            // Given three keys inserted out of order
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, bytes("b"), bytes("2"), Set.of());
+                txn.put(dbi, bytes("a"), bytes("1"), Set.of());
+                txn.put(dbi, bytes("c"), bytes("3"), Set.of());
+                txn.commit();
+            }
+
+            // When walked from FIRST via NEXT using the value-only overload
+            List<String> values = new ArrayList<>();
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                for (MemorySegment v = cursor.getValue(LmdbCursorOp.FIRST);
+                        v != null;
+                        v = cursor.getValue(LmdbCursorOp.NEXT)) {
+                    values.add(text(v));
+                }
+            }
+
+            // Then the values come back in key order, same as get(op)
+            assertThat(values).containsExactly("1", "2", "3");
+        }
+
+        @Test
+        void getValueOnAnEmptyDatabaseIsEmpty() {
+            // Given an empty database
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+
+            // When positioned at FIRST via the value-only overload
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                MemorySegment result = cursor.getValue(LmdbCursorOp.FIRST);
+
+                // Then there is nothing to find
+                assertThat(result).isNull();
+            }
+        }
+
+        @Test
+        void getValueFindsTheValueStoredUnderAKey() {
+            // Given an existing key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, bytes("k"), bytes("v"), Set.of());
+                txn.commit();
+            }
+
+            // When positioned with SET via the value-only overload
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                MemorySegment result = cursor.getValue(LmdbCursorOp.SET, bytes("k"));
+
+                // Then it returns the stored value
+                assertThat(result).isNotNull();
+                assertThat(text(result)).isEqualTo("v");
+            }
+        }
+
+        @Test
+        void getValueOnAMissingKeyIsEmpty() {
+            // Given an empty database
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+
+            // When positioned with SET at a key that was never stored
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                MemorySegment result = cursor.getValue(LmdbCursorOp.SET, bytes("missing"));
+
+                // Then there is nothing to find
+                assertThat(result).isNull();
+            }
+        }
+
+        @Test
+        void getValueAcceptsANativeKeySegment() {
+            // Given an existing key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, bytes("k"), bytes("v"), Set.of());
+                txn.commit();
+            }
+
+            // When positioned with SET via a native key segment
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi);
+                    Arena arena = Arena.ofConfined()) {
+                MemorySegment result = cursor.getValue(LmdbCursorOp.SET, nativeBytes(arena, "k"));
+
+                // Then it returns the stored value
+                assertThat(result).isNotNull();
+                assertThat(text(result)).isEqualTo("v");
+            }
+        }
+
+        @Test
+        void getValueAcceptsADirectByteBufferKey() {
+            // Given an existing key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, bytes("k"), bytes("v"), Set.of());
+                txn.commit();
+            }
+
+            // When positioned with SET via a direct ByteBuffer key
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                MemorySegment result = cursor.getValue(LmdbCursorOp.SET, directBuffer("k"));
+
+                // Then it returns the stored value
+                assertThat(result).isNotNull();
+                assertThat(text(result)).isEqualTo("v");
+            }
+        }
+    }
+
+    @Nested
     class Mutation {
 
         @Test

@@ -184,8 +184,8 @@ public class ReadBenchmark {
 
     @Benchmark
     public void ffmReadSeq(Blackhole bh) {
-        for (LmdbCursor.Entry e = cursor.get(LmdbCursorOp.FIRST); e != null; e = cursor.get(LmdbCursorOp.NEXT)) {
-            bh.consume(e.data());
+        for (MemorySegment v = cursor.getValue(LmdbCursorOp.FIRST); v != null; v = cursor.getValue(LmdbCursorOp.NEXT)) {
+            bh.consume(v);
         }
     }
 
@@ -199,8 +199,8 @@ public class ReadBenchmark {
 
     @Benchmark
     public void ffmReadRev(Blackhole bh) {
-        for (LmdbCursor.Entry e = cursor.get(LmdbCursorOp.LAST); e != null; e = cursor.get(LmdbCursorOp.PREV)) {
-            bh.consume(e.data());
+        for (MemorySegment v = cursor.getValue(LmdbCursorOp.LAST); v != null; v = cursor.getValue(LmdbCursorOp.PREV)) {
+            bh.consume(v);
         }
     }
 
@@ -215,14 +215,14 @@ public class ReadBenchmark {
     @Benchmark
     public void ffmReadKey(Blackhole bh) {
         for (byte[] k : keys) {
-            bh.consume(cursor.get(LmdbCursorOp.SET, k));
+            bh.consume(cursor.getValue(LmdbCursorOp.SET, k));
         }
     }
 
     @Benchmark
     public void ffmReadKeySegment(Blackhole bh) {
         for (MemorySegment k : keySegments) {
-            bh.consume(cursor.get(LmdbCursorOp.SET, k));
+            bh.consume(cursor.getValue(LmdbCursorOp.SET, k));
         }
     }
 
