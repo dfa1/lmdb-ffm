@@ -57,7 +57,7 @@ public final class LmdbEnv extends NativeObject {
     }
 
     /// Sets the size of the memory map (and so the maximum size of all
-    /// databases combined). Must be called before [#open(Path, int, int)].
+    /// databases combined). Must be called before [#open(Path, Set, int)].
     ///
     /// @param bytes the map size, in bytes
     /// @return `this`, for chaining
@@ -74,7 +74,7 @@ public final class LmdbEnv extends NativeObject {
     }
 
     /// Sets the maximum number of named databases this environment can hold.
-    /// Must be called before [#open(Path, int, int)]; the default is `0`
+    /// Must be called before [#open(Path, Set, int)]; the default is `0`
     /// (only the unnamed database).
     ///
     /// @param count the maximum number of named databases
@@ -92,7 +92,7 @@ public final class LmdbEnv extends NativeObject {
     }
 
     /// Sets the maximum number of threads/reader slots for concurrent read
-    /// transactions. Must be called before [#open(Path, int, int)].
+    /// transactions. Must be called before [#open(Path, Set, int)].
     ///
     /// @param count the maximum number of concurrent reader slots
     /// @return `this`, for chaining
