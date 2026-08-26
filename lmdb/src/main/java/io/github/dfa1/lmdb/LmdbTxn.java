@@ -2,6 +2,7 @@ package io.github.dfa1.lmdb;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -142,10 +143,41 @@ public final class LmdbTxn extends NativeObject {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.allocate(arena);
-            boolean found = NativeCall.checkFound(() ->
-                    (int) Bindings.GET.invokeExact(ptr(), dbi.handle(), keyVal, dataVal));
-            return found ? Optional.of(LmdbVal.data(dataVal)) : Optional.empty();
+            return getInto(dbi, keyVal, dataVal) ? Optional.of(LmdbVal.data(dataVal)) : Optional.empty();
         }
+    }
+
+    /// Zero-copy read with a zero-copy key: like [#getSegment(LmdbDbi, byte[])],
+    /// but for a caller whose key is already off-heap (e.g. an mmap slice) —
+    /// no `byte[]` bounce on either side of the call.
+    ///
+    /// @param dbi the database to read from
+    /// @param key native key bytes to look up (copied into a temporary
+    ///            `MDB_val`; not retained after this call)
+    /// @return the stored data, or empty if `key` is not present
+    /// @throws LmdbException if the native call fails
+    public Optional<MemorySegment> getSegment(LmdbDbi dbi, MemorySegment key) {
+        Objects.requireNonNull(dbi, "dbi");
+        NativeCall.requireNative(key, "key");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(arena, key);
+            MemorySegment dataVal = LmdbVal.allocate(arena);
+            return getInto(dbi, keyVal, dataVal) ? Optional.of(LmdbVal.data(dataVal)) : Optional.empty();
+        }
+    }
+
+    /// [#getSegment(LmdbDbi, MemorySegment)] for a direct [ByteBuffer] key.
+    /// The key is `[position, limit)` of `key` ([MemorySegment#ofBuffer]), not
+    /// its full capacity; a heap-backed buffer is rejected the same way a
+    /// heap [MemorySegment] is.
+    ///
+    /// @param dbi the database to read from
+    /// @param key native key bytes to look up, as a direct buffer's remaining content
+    /// @return the stored data, or empty if `key` is not present
+    /// @throws LmdbException if the native call fails
+    public Optional<MemorySegment> getSegment(LmdbDbi dbi, ByteBuffer key) {
+        Objects.requireNonNull(key, "key");
+        return getSegment(dbi, MemorySegment.ofBuffer(key));
     }
 
     /// Looks up `key` in `dbi`, copying the stored data into a heap array. See
@@ -161,10 +193,81 @@ public final class LmdbTxn extends NativeObject {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.allocate(arena);
-            boolean found = NativeCall.checkFound(() ->
-                    (int) Bindings.GET.invokeExact(ptr(), dbi.handle(), keyVal, dataVal));
-            return found ? Optional.of(LmdbVal.toByteArray(dataVal)) : Optional.empty();
+            return getInto(dbi, keyVal, dataVal) ? Optional.of(LmdbVal.toByteArray(dataVal)) : Optional.empty();
         }
+    }
+
+    /// Zero-copy read that maps the stored value straight to a result via
+    /// `mapper`, with no `byte[]` copy and no [MemorySegment] left over
+    /// afterward to manage: unlike [#getSegment(LmdbDbi, byte[])], the view
+    /// passed to `mapper` becomes inaccessible the instant this call returns
+    /// (see [Mapper]). Use this when the value only needs to be parsed into a
+    /// plain result — a `String`, a record, a checksum.
+    ///
+    /// @param <R>    the type produced by `mapper`
+    /// @param dbi    the database to read from
+    /// @param key    the key to look up
+    /// @param mapper callback invoked with a zero-copy view of the stored value
+    /// @return the mapped result, or empty if `key` is not present
+    /// @throws LmdbException if the native call fails
+    public <R> Optional<R> get(LmdbDbi dbi, byte[] key, Mapper<R> mapper) {
+        Objects.requireNonNull(dbi, "dbi");
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(mapper, "mapper");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(arena, key);
+            MemorySegment dataVal = LmdbVal.allocate(arena);
+            if (!getInto(dbi, keyVal, dataVal)) {
+                return Optional.empty();
+            }
+            return Optional.of(mapValue(arena, dataVal, mapper));
+        }
+    }
+
+    /// [#get(LmdbDbi, byte[], Mapper)] with a zero-copy key.
+    ///
+    /// @param <R>    the type produced by `mapper`
+    /// @param dbi    the database to read from
+    /// @param key    native key bytes to look up (copied into a temporary
+    ///               `MDB_val`; not retained after this call)
+    /// @param mapper callback invoked with a zero-copy view of the stored value
+    /// @return the mapped result, or empty if `key` is not present
+    /// @throws LmdbException if the native call fails
+    public <R> Optional<R> get(LmdbDbi dbi, MemorySegment key, Mapper<R> mapper) {
+        Objects.requireNonNull(dbi, "dbi");
+        NativeCall.requireNative(key, "key");
+        Objects.requireNonNull(mapper, "mapper");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(arena, key);
+            MemorySegment dataVal = LmdbVal.allocate(arena);
+            if (!getInto(dbi, keyVal, dataVal)) {
+                return Optional.empty();
+            }
+            return Optional.of(mapValue(arena, dataVal, mapper));
+        }
+    }
+
+    /// [#get(LmdbDbi, byte[], Mapper)] for a direct [ByteBuffer] key — see
+    /// [#getSegment(LmdbDbi, ByteBuffer)] for the key-range/heap-buffer caveats.
+    ///
+    /// @param <R>    the type produced by `mapper`
+    /// @param dbi    the database to read from
+    /// @param key    native key bytes to look up, as a direct buffer's remaining content
+    /// @param mapper callback invoked with a zero-copy view of the stored value
+    /// @return the mapped result, or empty if `key` is not present
+    /// @throws LmdbException if the native call fails
+    public <R> Optional<R> get(LmdbDbi dbi, ByteBuffer key, Mapper<R> mapper) {
+        Objects.requireNonNull(key, "key");
+        return get(dbi, MemorySegment.ofBuffer(key), mapper);
+    }
+
+    private static <R> R mapValue(Arena arena, MemorySegment dataVal, Mapper<R> mapper) {
+        R result = mapper.map(LmdbVal.dataScoped(arena, dataVal));
+        return Objects.requireNonNull(result, "Mapper.map(MemorySegment) must not return null");
+    }
+
+    private boolean getInto(LmdbDbi dbi, MemorySegment keyVal, MemorySegment dataVal) {
+        return NativeCall.checkFound(() -> (int) Bindings.GET.invokeExact(ptr(), dbi.handle(), keyVal, dataVal));
     }
 
     /// Stores `data` under `key` in `dbi`.
@@ -189,6 +292,44 @@ public final class LmdbTxn extends NativeObject {
         }
     }
 
+    /// Zero-copy write: like [#put(LmdbDbi, byte[], byte[], Set)], for a
+    /// caller whose key and data are already off-heap — no `byte[]` bounce on
+    /// either side of the call.
+    ///
+    /// @param dbi   the database to write to
+    /// @param key   native key bytes to store (copied into a temporary
+    ///              `MDB_val`; not retained after this call)
+    /// @param data  native data bytes to store (likewise not retained)
+    /// @param flags the flags to write with
+    /// @throws LmdbException if the write fails
+    public void put(LmdbDbi dbi, MemorySegment key, MemorySegment data, Set<LmdbWriteFlag> flags) {
+        Objects.requireNonNull(dbi, "dbi");
+        NativeCall.requireNative(key, "key");
+        NativeCall.requireNative(data, "data");
+        Objects.requireNonNull(flags, "flags");
+        int bits = LmdbFlag.toBits(flags);
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(arena, key);
+            MemorySegment dataVal = LmdbVal.of(arena, data);
+            NativeCall.check(() -> (int) Bindings.PUT.invokeExact(ptr(), dbi.handle(), keyVal, dataVal, bits));
+        }
+    }
+
+    /// [#put(LmdbDbi, MemorySegment, MemorySegment, Set)] for direct
+    /// [ByteBuffer] key/data — see [#getSegment(LmdbDbi, ByteBuffer)] for the
+    /// key-range/heap-buffer caveats (both apply here too).
+    ///
+    /// @param dbi   the database to write to
+    /// @param key   the key to store, as a direct buffer's remaining content
+    /// @param data  the data to store, as a direct buffer's remaining content
+    /// @param flags the flags to write with
+    /// @throws LmdbException if the write fails
+    public void put(LmdbDbi dbi, ByteBuffer key, ByteBuffer data, Set<LmdbWriteFlag> flags) {
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(data, "data");
+        put(dbi, MemorySegment.ofBuffer(key), MemorySegment.ofBuffer(data), flags);
+    }
+
     /// Deletes `key` (and, for an `MDB_DUPSORT` database, every duplicate data
     /// value under it) from `dbi`.
     ///
@@ -204,6 +345,34 @@ public final class LmdbTxn extends NativeObject {
             return NativeCall.checkFound(() ->
                     (int) Bindings.DEL.invokeExact(ptr(), dbi.handle(), keyVal, MemorySegment.NULL));
         }
+    }
+
+    /// [#delete(LmdbDbi, byte[])] with a zero-copy key.
+    ///
+    /// @param dbi the database to delete from
+    /// @param key native key bytes to delete (copied into a temporary
+    ///            `MDB_val`; not retained after this call)
+    /// @return `true` if `key` was present and deleted, `false` if it was not found
+    /// @throws LmdbException if the delete fails
+    public boolean delete(LmdbDbi dbi, MemorySegment key) {
+        Objects.requireNonNull(dbi, "dbi");
+        NativeCall.requireNative(key, "key");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(arena, key);
+            return NativeCall.checkFound(() ->
+                    (int) Bindings.DEL.invokeExact(ptr(), dbi.handle(), keyVal, MemorySegment.NULL));
+        }
+    }
+
+    /// [#delete(LmdbDbi, MemorySegment)] for a direct [ByteBuffer] key.
+    ///
+    /// @param dbi the database to delete from
+    /// @param key the key to delete, as a direct buffer's remaining content
+    /// @return `true` if `key` was present and deleted, `false` if it was not found
+    /// @throws LmdbException if the delete fails
+    public boolean delete(LmdbDbi dbi, ByteBuffer key) {
+        Objects.requireNonNull(key, "key");
+        return delete(dbi, MemorySegment.ofBuffer(key));
     }
 
     /// Deletes one specific `data` duplicate under `key` from an `MDB_DUPSORT`
@@ -223,6 +392,38 @@ public final class LmdbTxn extends NativeObject {
             MemorySegment dataVal = LmdbVal.of(arena, data);
             return NativeCall.checkFound(() -> (int) Bindings.DEL.invokeExact(ptr(), dbi.handle(), keyVal, dataVal));
         }
+    }
+
+    /// [#delete(LmdbDbi, byte[], byte[])] with zero-copy key and data.
+    ///
+    /// @param dbi  the database to delete from
+    /// @param key  native key bytes to delete under (not retained after this call)
+    /// @param data native data bytes identifying the duplicate (likewise not retained)
+    /// @return `true` if the pair was present and deleted, `false` if it was not found
+    /// @throws LmdbException if the delete fails
+    public boolean delete(LmdbDbi dbi, MemorySegment key, MemorySegment data) {
+        Objects.requireNonNull(dbi, "dbi");
+        NativeCall.requireNative(key, "key");
+        NativeCall.requireNative(data, "data");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(arena, key);
+            MemorySegment dataVal = LmdbVal.of(arena, data);
+            return NativeCall.checkFound(() -> (int) Bindings.DEL.invokeExact(ptr(), dbi.handle(), keyVal, dataVal));
+        }
+    }
+
+    /// [#delete(LmdbDbi, MemorySegment, MemorySegment)] for direct
+    /// [ByteBuffer] key/data.
+    ///
+    /// @param dbi  the database to delete from
+    /// @param key  the key to delete under, as a direct buffer's remaining content
+    /// @param data the specific duplicate value, as a direct buffer's remaining content
+    /// @return `true` if the pair was present and deleted, `false` if it was not found
+    /// @throws LmdbException if the delete fails
+    public boolean delete(LmdbDbi dbi, ByteBuffer key, ByteBuffer data) {
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(data, "data");
+        return delete(dbi, MemorySegment.ofBuffer(key), MemorySegment.ofBuffer(data));
     }
 
     /// Opens a cursor on `dbi` within this transaction.

@@ -63,6 +63,21 @@ try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
 }
 ```
 
+Zero-copy point lookup with a `Mapper` — no `byte[]`, no `MemorySegment` left
+over to manage; the view is only valid inside the callback:
+
+```java
+try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+    Optional<String> value = txn.get(dbi, "key".getBytes(UTF_8),
+            seg -> new String(seg.toArray(ValueLayout.JAVA_BYTE), UTF_8));
+}
+```
+
+`get`/`getSegment`/`put`/`delete` (and their `Mapper`-based cousin) all take
+`MemorySegment` or direct `ByteBuffer` key/data too, for callers whose bytes
+are already off-heap — an mmap slice, a network buffer, an arena allocation —
+with no `byte[]` bounce on either side of the call.
+
 Run with `--enable-native-access=ALL-UNNAMED`.
 
 ## Platform support

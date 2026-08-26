@@ -14,6 +14,10 @@ practice, but the header is what the linked binary actually implements.
 The differentiator is the **zero-copy read path**: `mdb_get`/cursor reads hand
 back a `MemorySegment` that points directly into the memory-mapped database —
 no `byte[]` copy — valid for the lifetime of the enclosing read transaction.
+`LmdbTxn#get(LmdbDbi, byte[], Mapper)` narrows that further: the view is bound
+to a `mapper`-scoped arena, so it becomes inaccessible the instant the call
+returns rather than merely being documented as such — useful when the value
+just needs parsing into a plain result, not a `MemorySegment` to manage.
 
 ## Layout
 
@@ -86,10 +90,38 @@ Built `.dylib`/`.so`/`.dll` are git-ignored; they are regenerated from the submo
   [LmdbCursor.Entry], which stays a public record: it is only ever handed
   *out* by [LmdbCursor#get(LmdbCursorOp)], never accepted as an input
   parameter anywhere, so a fabricated one has nothing to corrupt.
-- API is **segment-first for the zero-copy read path, with thin `byte[]`
-  overloads** for heap callers. `LmdbTxn#get` returns a `MemorySegment` backed
-  directly by the mmap; never copy it to a `byte[]` unless the caller asked
-  for the `byte[]` overload.
+- API is **segment-first, with thin `byte[]` overloads** for heap callers, on
+  both directions: `getSegment`/`get(..., Mapper)` read zero-copy,
+  `put`/`delete` also take `MemorySegment` key/data so a caller whose bytes
+  are already off-heap (an mmap slice, an arena buffer) never bounces through
+  a `byte[]` on the write path either. `LmdbTxn#getSegment` returns a segment
+  backed directly by the mmap; never copy it to a `byte[]` unless the caller
+  asked for the `byte[]` overload. Every `MemorySegment`-accepting method
+  guards with `NativeCall.requireNative` — a heap segment has no address FFM
+  can hand to C, so this fails fast with a clear message instead of a
+  cryptic linker error.
+- A third key/data flavor, `ByteBuffer`, exists purely as a thin conversion
+  over the `MemorySegment` overloads (`MemorySegment.ofBuffer(buffer)`, then
+  delegate) — no separate code path, no separate struct-marshalling logic.
+  Two consequences worth knowing when adding a new one: (1) `ofBuffer` covers
+  `[position, limit)`, not the buffer's full capacity, so a caller can stage a
+  key inside a larger scratch buffer via position/limit without slicing; (2)
+  a heap-backed (non-direct) `ByteBuffer` converts to a heap `MemorySegment`,
+  which the delegated-to method's own `requireNative` then rejects — so
+  `ByteBuffer` overloads need no `requireNative` call of their own, the
+  `MemorySegment` overload they forward to already has it.
+- Zero-copy reads return two different lifetimes for two different needs:
+  `getSegment`'s segment stays valid for the rest of the transaction (or
+  until the entry is overwritten/deleted), matching how long the caller might
+  reasonably want to hold a raw view; `get(..., Mapper)`'s segment is bound to
+  a call-scoped arena and becomes inaccessible the moment the callback
+  returns (`LmdbVal.dataScoped`, using the 3-arg `MemorySegment#reinterpret`
+  overload with a `null` cleanup — this view borrows from the mmap, it does
+  not own it, so the arena closing must not attempt to free it). Both share
+  one more hardening `LmdbVal.data` applies: the returned segment is always
+  `.asReadOnly()`, since writing through it would corrupt the mmap'd file in
+  place (`MDB_WRITEMAP`) or segfault the JVM (without it — the mapping is
+  `PROT_READ`).
 - Run with `--enable-native-access=ALL-UNNAMED`.
 - `MDB_dbi` is a native `unsigned int` handle, not a pointer — `LmdbDbi` wraps
   it directly (see above), not a `NativeObject`; it needs no close, only

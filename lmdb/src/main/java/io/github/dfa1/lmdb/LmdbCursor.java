@@ -2,6 +2,7 @@ package io.github.dfa1.lmdb;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -90,6 +91,39 @@ public final class LmdbCursor extends NativeObject {
         }
     }
 
+    /// [#get(LmdbCursorOp, byte[])] with a zero-copy key.
+    ///
+    /// @param op  the positioning operation
+    /// @param key native key bytes to search for (copied into a temporary
+    ///            `MDB_val`; not retained after this call)
+    /// @return the key/data pair at the new position, or empty if there isn't one
+    /// @throws LmdbException if the native call fails
+    public Optional<Entry> get(LmdbCursorOp op, MemorySegment key) {
+        Objects.requireNonNull(op, "op");
+        NativeCall.requireNative(key, "key");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(arena, key);
+            MemorySegment dataVal = LmdbVal.allocate(arena);
+            boolean found = NativeCall.checkFound(() ->
+                    (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value()));
+            return found ? Optional.of(new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal))) : Optional.empty();
+        }
+    }
+
+    /// [#get(LmdbCursorOp, MemorySegment)] for a direct [ByteBuffer] key. The
+    /// key is `[position, limit)` of `key` ([MemorySegment#ofBuffer]), not its
+    /// full capacity; a heap-backed buffer is rejected the same way a heap
+    /// [MemorySegment] is.
+    ///
+    /// @param op  the positioning operation
+    /// @param key native key bytes to search for, as a direct buffer's remaining content
+    /// @return the key/data pair at the new position, or empty if there isn't one
+    /// @throws LmdbException if the native call fails
+    public Optional<Entry> get(LmdbCursorOp op, ByteBuffer key) {
+        Objects.requireNonNull(key, "key");
+        return get(op, MemorySegment.ofBuffer(key));
+    }
+
     /// Stores `data` under `key` at this cursor's current database, per `flags`
     /// (e.g. `EnumSet.of(LmdbWriteFlag.CURRENT)` to overwrite the entry at the
     /// cursor's current position).
@@ -108,6 +142,38 @@ public final class LmdbCursor extends NativeObject {
             MemorySegment dataVal = LmdbVal.of(arena, data);
             NativeCall.check(() -> (int) Bindings.CURSOR_PUT.invokeExact(ptr(), keyVal, dataVal, bits));
         }
+    }
+
+    /// [#put(byte[], byte[], Set)] with a zero-copy key and data.
+    ///
+    /// @param key   native key bytes to store (not retained after this call)
+    /// @param data  native data bytes to store (likewise not retained)
+    /// @param flags the flags to write with
+    /// @throws LmdbException if the write fails
+    public void put(MemorySegment key, MemorySegment data, Set<LmdbWriteFlag> flags) {
+        NativeCall.requireNative(key, "key");
+        NativeCall.requireNative(data, "data");
+        Objects.requireNonNull(flags, "flags");
+        int bits = LmdbFlag.toBits(flags);
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(arena, key);
+            MemorySegment dataVal = LmdbVal.of(arena, data);
+            NativeCall.check(() -> (int) Bindings.CURSOR_PUT.invokeExact(ptr(), keyVal, dataVal, bits));
+        }
+    }
+
+    /// [#put(MemorySegment, MemorySegment, Set)] for direct [ByteBuffer]
+    /// key/data — see [#get(LmdbCursorOp, ByteBuffer)] for the
+    /// key-range/heap-buffer caveats (both apply here too).
+    ///
+    /// @param key   the key to store, as a direct buffer's remaining content
+    /// @param data  the data to store, as a direct buffer's remaining content
+    /// @param flags the flags to write with
+    /// @throws LmdbException if the write fails
+    public void put(ByteBuffer key, ByteBuffer data, Set<LmdbWriteFlag> flags) {
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(data, "data");
+        put(MemorySegment.ofBuffer(key), MemorySegment.ofBuffer(data), flags);
     }
 
     /// Deletes the key/data pair at this cursor's current position.

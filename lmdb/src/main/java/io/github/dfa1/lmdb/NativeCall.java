@@ -3,6 +3,7 @@ package io.github.dfa1.lmdb;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
@@ -82,6 +83,22 @@ final class NativeCall {
         MemorySegment out = arena.allocate(JAVA_INT);
         check(() -> c.run(out));
         return out.get(JAVA_INT, 0);
+    }
+
+    /// Guards a zero-copy entry point: the segment handed to LMDB must be
+    /// backed by native (off-heap) memory, since its address is dereferenced
+    /// in C. Fails fast with a clear message instead of the FFM linker's
+    /// cryptic error (or worse, a crash) from trying to derive a native
+    /// address from heap-backed memory.
+    ///
+    /// @param seg  the segment to check
+    /// @param name the parameter name, for the exception message
+    static void requireNative(MemorySegment seg, String name) {
+        Objects.requireNonNull(seg, name);
+        if (!seg.isNative()) {
+            throw new IllegalArgumentException(
+                    name + " must be a native (off-heap) MemorySegment; got a heap segment");
+        }
     }
 
     private static int invoke(LmdbCall c) {

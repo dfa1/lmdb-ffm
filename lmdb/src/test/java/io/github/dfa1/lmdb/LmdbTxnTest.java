@@ -7,12 +7,15 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.EnumSet;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -162,6 +165,289 @@ class LmdbTxnTest {
     }
 
     @Nested
+    class ZeroCopy {
+
+        @Test
+        void roundTripsThroughMemorySegmentKeyAndData() {
+            // Given a value put via native key/data segments
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn(); Arena arena = Arena.ofConfined()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, nativeBytes(arena, "k"), nativeBytes(arena, "v"), Set.of());
+                txn.commit();
+            }
+
+            // When read back via a native key segment
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY)); Arena arena = Arena.ofConfined()) {
+                Optional<MemorySegment> result = txn.getSegment(dbi, nativeBytes(arena, "k"));
+
+                // Then it returns the same bytes
+                assertThat(result).isPresent();
+                assertThat(result.orElseThrow().toArray(JAVA_BYTE)).isEqualTo(value("v"));
+            }
+        }
+
+        @Test
+        void deleteAcceptsANativeKeySegment() {
+            // Given an existing key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
+                txn.commit();
+            }
+
+            // When deleted via a native key segment
+            try (LmdbTxn txn = env.beginTxn(); Arena arena = Arena.ofConfined()) {
+                boolean deleted = txn.delete(dbi, nativeBytes(arena, "k"));
+                txn.commit();
+
+                // Then it is reported deleted and gone
+                assertThat(deleted).isTrue();
+            }
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                assertThat(txn.get(dbi, key("k"))).isEmpty();
+            }
+        }
+
+        @Test
+        void putRejectsAHeapKeySegment() {
+            // Given a heap-backed segment, which cannot be dereferenced by native code
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+            MemorySegment heapKey = MemorySegment.ofArray(key("k"));
+
+            // When put with it as the key
+            try (LmdbTxn txn = env.beginTxn()) {
+                ThrowingCallable result = () -> txn.put(dbi, heapKey, MemorySegment.ofArray(value("v")), Set.of());
+
+                // Then it fails fast naming the problem, not with a native crash
+                assertThatThrownBy(result)
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("native");
+            }
+        }
+    }
+
+    @Nested
+    class WithByteBuffer {
+
+        @Test
+        void roundTripsThroughADirectByteBufferKeyAndData() {
+            // Given a value put via direct ByteBuffer key/data
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, directBuffer("k"), directBuffer("v"), Set.of());
+                txn.commit();
+            }
+
+            // When read back via a direct ByteBuffer key
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                Optional<MemorySegment> result = txn.getSegment(dbi, directBuffer("k"));
+
+                // Then it returns the same bytes
+                assertThat(result).isPresent();
+                assertThat(result.orElseThrow().toArray(JAVA_BYTE)).isEqualTo(value("v"));
+            }
+        }
+
+        @Test
+        void onlyTheRemainingBytesOfTheBufferAreUsedAsTheKey() {
+            // Given a direct buffer whose position/limit mark out just "k" in
+            // the middle of a larger backing buffer
+            ByteBuffer buf = ByteBuffer.allocateDirect(16);
+            buf.put((byte) 'x').put(key("k")).put((byte) 'y');
+            buf.position(1).limit(2);
+
+            // When put with it as the key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, buf, directBuffer("v"), Set.of());
+                txn.commit();
+            }
+
+            // Then only "k" (not "xky") was stored as the key
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                assertThat(txn.get(dbi, key("k"))).contains(value("v"));
+            }
+        }
+
+        @Test
+        void deleteAcceptsADirectByteBufferKey() {
+            // Given an existing key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
+                txn.commit();
+            }
+
+            // When deleted via a direct ByteBuffer key
+            try (LmdbTxn txn = env.beginTxn()) {
+                boolean deleted = txn.delete(dbi, directBuffer("k"));
+                txn.commit();
+
+                assertThat(deleted).isTrue();
+            }
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                assertThat(txn.get(dbi, key("k"))).isEmpty();
+            }
+        }
+
+        @Test
+        void putRejectsAHeapByteBufferKey() {
+            // Given a non-direct (heap-backed) buffer, which cannot be
+            // dereferenced by native code
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+            ByteBuffer heapKey = ByteBuffer.wrap(key("k"));
+
+            // When put with it as the key
+            try (LmdbTxn txn = env.beginTxn()) {
+                ThrowingCallable result = () -> txn.put(dbi, heapKey, directBuffer("v"), Set.of());
+
+                // Then it fails fast naming the problem, not with a native crash
+                assertThatThrownBy(result)
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("native");
+            }
+        }
+
+        @Test
+        void mapperAcceptsADirectByteBufferKey() {
+            // Given a value put and committed
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
+                txn.commit();
+            }
+
+            // When read back with a direct ByteBuffer key and a Mapper
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                Optional<String> result = txn.get(dbi, directBuffer("k"), LmdbTxnTest::decode);
+
+                // Then the mapped result is returned
+                assertThat(result).contains("v");
+            }
+        }
+    }
+
+    @Nested
+    class WithMapper {
+
+        @Test
+        void mapsTheStoredValueWithoutMaterializingAByteArray() {
+            // Given a value put and committed
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
+                txn.commit();
+            }
+
+            // When read back through a Mapper that decodes it as text
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                Optional<String> result = txn.get(dbi, key("k"), LmdbTxnTest::decode);
+
+                // Then the mapped result is returned
+                assertThat(result).contains("v");
+            }
+        }
+
+        @Test
+        void mapsTheStoredValueWithAZeroCopyKeyToo() {
+            // Given a value put and committed
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
+                txn.commit();
+            }
+
+            // When read back with both a native key and a Mapper
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY)); Arena arena = Arena.ofConfined()) {
+                Optional<String> result = txn.get(dbi, nativeBytes(arena, "k"), LmdbTxnTest::decode);
+
+                // Then the mapped result is returned
+                assertThat(result).contains("v");
+            }
+        }
+
+        @Test
+        void mapperOnAMissingKeyIsEmptyAndNeverInvoked() {
+            // Given an empty database
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+
+            // When read through a Mapper that would fail if ever called
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                Optional<String> result = txn.get(dbi, key("missing"), v -> {
+                    throw new AssertionError("Mapper must not run for a missing key");
+                });
+
+                // Then it is empty, and the mapper never ran
+                assertThat(result).isEmpty();
+            }
+        }
+
+        @Test
+        void mapperRejectsANullReturn() {
+            // Given a value put and committed
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
+                txn.commit();
+            }
+
+            // When read through a Mapper that returns null
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                ThrowingCallable result = () -> txn.get(dbi, key("k"), v -> null);
+
+                // Then it is rejected rather than silently accepted
+                assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+            }
+        }
+
+        @Test
+        void theMappedViewIsInaccessibleOnceGetReturns() {
+            // Given a value put and committed
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
+                txn.commit();
+            }
+
+            // When a Mapper smuggles the raw view out by reference
+            AtomicReference<MemorySegment> leaked = new AtomicReference<>();
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                txn.get(dbi, key("k"), v -> {
+                    leaked.set(v);
+                    return "captured";
+                });
+            }
+
+            // Then touching it after the call returns fails fast instead of reading
+            // through a dangling pointer — the view's arena closed with the call.
+            ThrowingCallable result = () -> leaked.get().get(JAVA_BYTE, 0);
+            assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Nested
     class TransactionLifecycle {
 
         @Test
@@ -248,5 +534,21 @@ class LmdbTxnTest {
 
     private static byte[] value(String s) {
         return s.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static MemorySegment nativeBytes(Arena arena, String s) {
+        byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
+        MemorySegment seg = arena.allocate(bytes.length);
+        MemorySegment.copy(bytes, 0, seg, JAVA_BYTE, 0, bytes.length);
+        return seg;
+    }
+
+    private static ByteBuffer directBuffer(String s) {
+        byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
+        return ByteBuffer.allocateDirect(bytes.length).put(bytes).flip();
+    }
+
+    private static String decode(MemorySegment value) {
+        return new String(value.toArray(JAVA_BYTE), StandardCharsets.UTF_8);
     }
 }

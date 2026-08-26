@@ -6,7 +6,9 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -102,6 +104,51 @@ class LmdbCursorTest {
                 assertThat(text(result.orElseThrow().key())).isEqualTo("c");
             }
         }
+
+        @Test
+        void getAcceptsANativeKeySegment() {
+            // Given keys "a" and "c"
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, bytes("a"), bytes("1"), Set.of());
+                txn.put(dbi, bytes("c"), bytes("3"), Set.of());
+                txn.commit();
+            }
+
+            // When positioned with SET_RANGE via a native key segment
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi);
+                    Arena arena = Arena.ofConfined()) {
+                Optional<LmdbCursor.Entry> result = cursor.get(LmdbCursorOp.SET_RANGE, nativeBytes(arena, "b"));
+
+                // Then it lands on the next key in order, "c"
+                assertThat(result).isPresent();
+                assertThat(text(result.orElseThrow().key())).isEqualTo("c");
+            }
+        }
+
+        @Test
+        void getAcceptsADirectByteBufferKey() {
+            // Given keys "a" and "c"
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, bytes("a"), bytes("1"), Set.of());
+                txn.put(dbi, bytes("c"), bytes("3"), Set.of());
+                txn.commit();
+            }
+
+            // When positioned with SET_RANGE via a direct ByteBuffer key
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                Optional<LmdbCursor.Entry> result = cursor.get(LmdbCursorOp.SET_RANGE, directBuffer("b"));
+
+                // Then it lands on the next key in order, "c"
+                assertThat(result).isPresent();
+                assertThat(text(result.orElseThrow().key())).isEqualTo("c");
+            }
+        }
     }
 
     @Nested
@@ -137,6 +184,52 @@ class LmdbCursorTest {
         }
 
         @Test
+        void cursorPutAcceptsNativeKeyAndDataSegments() {
+            // Given a database and an open write cursor
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+
+            // When an entry is put via the cursor using native key/data segments
+            try (LmdbTxn txn = env.beginTxn(); Arena arena = Arena.ofConfined()) {
+                try (LmdbCursor cursor = txn.openCursor(dbi)) {
+                    cursor.put(nativeBytes(arena, "k"), nativeBytes(arena, "v"), Set.of());
+                }
+                txn.commit();
+            }
+
+            // Then it is readable back
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                assertThat(txn.get(dbi, bytes("k"))).contains(bytes("v"));
+            }
+        }
+
+        @Test
+        void cursorPutAcceptsDirectByteBufferKeyAndData() {
+            // Given a database and an open write cursor
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+
+            // When an entry is put via the cursor using direct ByteBuffer key/data
+            try (LmdbTxn txn = env.beginTxn()) {
+                try (LmdbCursor cursor = txn.openCursor(dbi)) {
+                    cursor.put(directBuffer("k"), directBuffer("v"), Set.of());
+                }
+                txn.commit();
+            }
+
+            // Then it is readable back
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                assertThat(txn.get(dbi, bytes("k"))).contains(bytes("v"));
+            }
+        }
+
+        @Test
         void countReportsTheNumberOfDuplicatesUnderTheCurrentKey() {
             // Given an MDB_DUPSORT database with two values under the same key
             // (mdb_cursor_count is only valid on DUPSORT databases — plain
@@ -162,6 +255,18 @@ class LmdbCursorTest {
 
     private static byte[] bytes(String s) {
         return s.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static MemorySegment nativeBytes(Arena arena, String s) {
+        byte[] b = bytes(s);
+        MemorySegment seg = arena.allocate(b.length);
+        MemorySegment.copy(b, 0, seg, JAVA_BYTE, 0, b.length);
+        return seg;
+    }
+
+    private static ByteBuffer directBuffer(String s) {
+        byte[] b = bytes(s);
+        return ByteBuffer.allocateDirect(b.length).put(b).flip();
     }
 
     private static String text(MemorySegment segment) {

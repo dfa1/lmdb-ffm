@@ -48,14 +48,31 @@ final class LmdbVal {
         return (long) MV_SIZE_HANDLE.get(val, 0L);
     }
 
-    /// The `mv_data` pointer, widened to its `mv_size` byte length. Zero-copy:
-    /// for a value LMDB itself populated (a read result), this segment points
-    /// directly into the memory-mapped database and is valid only until the
-    /// enclosing transaction ends or the entry is overwritten/deleted.
+    /// The `mv_data` pointer, widened to its `mv_size` byte length and marked
+    /// read-only. Zero-copy: for a value LMDB itself populated (a read
+    /// result), this segment points directly into the memory-mapped
+    /// database and is valid only until the enclosing transaction ends or
+    /// the entry is overwritten/deleted. Read-only because writing through it
+    /// would either corrupt the mmap'd file in place (with `MDB_WRITEMAP`)
+    /// or segfault the JVM (without it, since the mapping is `PROT_READ`).
     @SuppressWarnings("restricted") // reinterpret needed: mv_data has no declared size until widened
     static MemorySegment data(MemorySegment val) {
         MemorySegment p = (MemorySegment) MV_DATA_HANDLE.get(val, 0L);
-        return p.reinterpret(size(val));
+        return p.reinterpret(size(val)).asReadOnly();
+    }
+
+    /// Like [#data], but the returned segment's liveness is additionally
+    /// bound to `arena`: accessing it after `arena` closes throws
+    /// [IllegalStateException] instead of silently reading through a stale
+    /// pointer. `null` cleanup is deliberate — this view borrows from the
+    /// memory map, it does not own it, so closing `arena` must not attempt to
+    /// free it. Used by [LmdbTxn]'s [Mapper]-based `get`, whose contract
+    /// requires the view to become inaccessible the moment the callback
+    /// returns, not merely documented as such.
+    @SuppressWarnings("restricted") // reinterpret needed: mv_data has no declared size until widened
+    static MemorySegment dataScoped(Arena arena, MemorySegment val) {
+        MemorySegment p = (MemorySegment) MV_DATA_HANDLE.get(val, 0L);
+        return p.reinterpret(size(val), arena, null).asReadOnly();
     }
 
     static byte[] toByteArray(MemorySegment val) {
