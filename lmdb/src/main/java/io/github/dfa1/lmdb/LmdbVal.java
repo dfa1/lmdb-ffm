@@ -30,9 +30,30 @@ final class LmdbVal {
     /// passed to.
     static MemorySegment of(Arena arena, MemorySegment data) {
         MemorySegment val = allocate(arena);
+        set(val, data);
+        return val;
+    }
+
+    /// Writes `data`'s address/size into the already-allocated MDB_val `val`,
+    /// without allocating a new struct — for reusing a persistent out-param
+    /// slot across calls instead of [#of(Arena, MemorySegment)]'s fresh one.
+    static void set(MemorySegment val, MemorySegment data) {
         MV_SIZE_HANDLE.set(val, 0L, data.byteSize());
         MV_DATA_HANDLE.set(val, 0L, data);
-        return val;
+    }
+
+    /// Returns `current` if it is already at least `minSize` bytes, otherwise
+    /// a larger buffer freshly allocated from `arena` (grown by doubling).
+    /// `arena` is a bump allocator with no per-allocation free, so a
+    /// persistent, rarely-growing buffer (the common case once a caller's key
+    /// sizes stabilize) wastes only the doubling's own overhead over the
+    /// buffer's lifetime, not one allocation per call.
+    static MemorySegment growBuffer(Arena arena, MemorySegment current, long minSize) {
+        if (current != null && current.byteSize() >= minSize) {
+            return current;
+        }
+        long newSize = current == null ? minSize : Math.max(minSize, current.byteSize() * 2);
+        return arena.allocate(newSize);
     }
 
     /// Copies `bytes` into `arena`-owned native memory and wraps it as an

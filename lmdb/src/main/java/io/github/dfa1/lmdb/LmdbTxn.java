@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.Set;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
 
 /// A transaction — wraps `MDB_txn*`. All reads and writes go through one.
@@ -31,6 +32,19 @@ import static java.lang.foreign.ValueLayout.JAVA_INT;
 public final class LmdbTxn extends NativeObject {
 
     private final LmdbEnv env;
+
+    // Reused across every keyed read (getSegment/get, keyed or not, byte[]
+    // or MemorySegment): these two 16-byte MDB_val out-param slots and the
+    // key-content buffer below live for the transaction's whole lifetime
+    // instead of being allocated (inside a freshly opened Arena) on every
+    // single call — see LmdbCursor's identical fields for the same
+    // reasoning and the benchmark that motivated it. Closed explicitly in
+    // commit()/abort()/tryClose() since none of them run through each other
+    // (see NativeObject#take()).
+    private final Arena arena = Arena.ofConfined();
+    private final MemorySegment keyVal = LmdbVal.allocate(arena);
+    private final MemorySegment dataVal = LmdbVal.allocate(arena);
+    private MemorySegment keyBuffer;
 
     private LmdbTxn(MemorySegment ptr, LmdbEnv env) {
         super(ptr);
@@ -65,13 +79,17 @@ public final class LmdbTxn extends NativeObject {
     /// @throws IllegalStateException if this transaction already ended
     public void commit() {
         MemorySegment p = take();
-        int code;
         try {
-            code = (int) Bindings.TXN_COMMIT.invokeExact(p);
-        } catch (Throwable t) {
-            throw NativeCall.rethrow(t);
+            int code;
+            try {
+                code = (int) Bindings.TXN_COMMIT.invokeExact(p);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+        } finally {
+            arena.close();
         }
-        NativeCall.check(code);
     }
 
     /// Aborts this transaction, discarding its writes (a read-only transaction
@@ -82,9 +100,13 @@ public final class LmdbTxn extends NativeObject {
     public void abort() {
         MemorySegment p = take();
         try {
-            Bindings.TXN_ABORT.invokeExact(p);
-        } catch (Throwable t) {
-            throw NativeCall.rethrow(t);
+            try {
+                Bindings.TXN_ABORT.invokeExact(p);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+        } finally {
+            arena.close();
         }
     }
 
@@ -172,11 +194,8 @@ public final class LmdbTxn extends NativeObject {
     public MemorySegment getSegment(LmdbDbi dbi, byte[] key) {
         Objects.requireNonNull(dbi, "dbi");
         Objects.requireNonNull(key, "key");
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment keyVal = LmdbVal.of(arena, key);
-            MemorySegment dataVal = LmdbVal.allocate(arena);
-            return getInto(dbi, keyVal, dataVal) ? LmdbVal.data(dataVal) : null;
-        }
+        setKey(key);
+        return getInto(dbi, keyVal, dataVal) ? LmdbVal.data(dataVal) : null;
     }
 
     /// Zero-copy read with a zero-copy key: like [#getSegment(LmdbDbi, byte[])],
@@ -191,11 +210,8 @@ public final class LmdbTxn extends NativeObject {
     public MemorySegment getSegment(LmdbDbi dbi, MemorySegment key) {
         Objects.requireNonNull(dbi, "dbi");
         NativeCall.requireNative(key, "key");
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment keyVal = LmdbVal.of(arena, key);
-            MemorySegment dataVal = LmdbVal.allocate(arena);
-            return getInto(dbi, keyVal, dataVal) ? LmdbVal.data(dataVal) : null;
-        }
+        LmdbVal.set(keyVal, key);
+        return getInto(dbi, keyVal, dataVal) ? LmdbVal.data(dataVal) : null;
     }
 
     /// [#getSegment(LmdbDbi, MemorySegment)] for a direct [ByteBuffer] key.
@@ -222,11 +238,8 @@ public final class LmdbTxn extends NativeObject {
     public byte[] get(LmdbDbi dbi, byte[] key) {
         Objects.requireNonNull(dbi, "dbi");
         Objects.requireNonNull(key, "key");
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment keyVal = LmdbVal.of(arena, key);
-            MemorySegment dataVal = LmdbVal.allocate(arena);
-            return getInto(dbi, keyVal, dataVal) ? LmdbVal.toByteArray(dataVal) : null;
-        }
+        setKey(key);
+        return getInto(dbi, keyVal, dataVal) ? LmdbVal.toByteArray(dataVal) : null;
     }
 
     /// Zero-copy read that maps the stored value straight to a result via
@@ -246,10 +259,12 @@ public final class LmdbTxn extends NativeObject {
         Objects.requireNonNull(dbi, "dbi");
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(mapper, "mapper");
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment keyVal = LmdbVal.of(arena, key);
-            MemorySegment dataVal = LmdbVal.allocate(arena);
-            return getInto(dbi, keyVal, dataVal) ? mapValue(arena, dataVal, mapper) : null;
+        setKey(key);
+        if (!getInto(dbi, keyVal, dataVal)) {
+            return null;
+        }
+        try (Arena scoped = Arena.ofConfined()) {
+            return mapValue(scoped, dataVal, mapper);
         }
     }
 
@@ -266,10 +281,12 @@ public final class LmdbTxn extends NativeObject {
         Objects.requireNonNull(dbi, "dbi");
         NativeCall.requireNative(key, "key");
         Objects.requireNonNull(mapper, "mapper");
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment keyVal = LmdbVal.of(arena, key);
-            MemorySegment dataVal = LmdbVal.allocate(arena);
-            return getInto(dbi, keyVal, dataVal) ? mapValue(arena, dataVal, mapper) : null;
+        LmdbVal.set(keyVal, key);
+        if (!getInto(dbi, keyVal, dataVal)) {
+            return null;
+        }
+        try (Arena scoped = Arena.ofConfined()) {
+            return mapValue(scoped, dataVal, mapper);
         }
     }
 
@@ -290,6 +307,15 @@ public final class LmdbTxn extends NativeObject {
     private static <R> R mapValue(Arena arena, MemorySegment dataVal, Mapper<R> mapper) {
         R result = mapper.map(LmdbVal.dataScoped(arena, dataVal));
         return Objects.requireNonNull(result, "Mapper.map(MemorySegment) must not return null");
+    }
+
+    // Copies key into the reused keyBuffer/keyVal fields (growing keyBuffer
+    // if needed) instead of wrapping it in a fresh Arena/MDB_val per call —
+    // see the arena/keyVal/dataVal field comment above.
+    private void setKey(byte[] key) {
+        keyBuffer = LmdbVal.growBuffer(arena, keyBuffer, Math.max(key.length, 1));
+        MemorySegment.copy(key, 0, keyBuffer, JAVA_BYTE, 0, key.length);
+        LmdbVal.set(keyVal, keyBuffer.asSlice(0, key.length));
     }
 
     private boolean getInto(LmdbDbi dbi, MemorySegment keyVal, MemorySegment dataVal) {
@@ -511,6 +537,10 @@ public final class LmdbTxn extends NativeObject {
 
     @Override
     protected void tryClose(MemorySegment ptr) throws Throwable {
-        Bindings.TXN_ABORT.invokeExact(ptr);
+        try {
+            Bindings.TXN_ABORT.invokeExact(ptr);
+        } finally {
+            arena.close();
+        }
     }
 }

@@ -68,19 +68,33 @@ Built `.dylib`/`.so`/`.dll` are git-ignored; they are regenerated from the submo
 - Native pointers wrap in `NativeObject` (`AutoCloseable`, idempotent close):
   `LmdbEnv` and `LmdbCursor`. `LmdbTxn` also extends it since `mdb_txn_commit`/
   `mdb_txn_abort` free the underlying `MDB_txn*` exactly once.
-- `LmdbCursor#get(LmdbCursorOp)` (the no-key `FIRST`/`NEXT`/`LAST`/`PREV`
-  positioning used by every scan loop) reuses two `MDB_val` out-param slots
-  allocated once, in a `LmdbCursor`-lifetime `Arena`, instead of opening a
-  fresh confined `Arena` per call — allocating two 16-byte structs from a new
-  `Arena.ofConfined()` on every call was, per `benchmark/CursorScanBenchmark`,
-  ~300x slower than lmdbjava's equivalent scan on an identical database.
-  Safe to reuse: LMDB only ever writes through these pointers, never reads
-  stale content from them, and the `MemorySegment`s an `Entry` hands back are
-  read out of the slots (pointing at the mmap, not at the slots themselves)
-  before the next call overwrites them. The key-taking `get`/`put` overloads
-  keep their per-call `Arena` — their key/data content varies by call, so
-  there is no fixed-size slot to reuse, and they are not the tight-loop case
-  this optimization targets.
+- `LmdbCursor#get(LmdbCursorOp[, key])` and `LmdbTxn#getSegment`/`get`/
+  `get(..., Mapper)` all reuse two `MDB_val` out-param slots allocated once,
+  in the owning `LmdbCursor`/`LmdbTxn`'s lifetime `Arena`, instead of opening
+  a fresh confined `Arena` per call — allocating two 16-byte structs from a
+  new `Arena.ofConfined()` on every call was, per `benchmark/ReadBenchmark`'s
+  `readSeq`, ~300x slower than lmdbjava's equivalent scan on an identical
+  database. The keyed overloads additionally reuse a `keyBuffer`
+  (`LmdbVal.growBuffer`) for the copied key content instead of allocating a
+  fresh one per call, grown by doubling only when a caller's key exceeds the
+  current size — `benchmark/ReadBenchmark`'s `readKey` originally paid this
+  same per-call-`Arena` cost per key (not just once per scan), closing nearly
+  the entire gap to lmdbjava's equivalent point lookup once fixed. Safe to
+  reuse: LMDB only ever writes through these pointers, never reads stale
+  content from them, and the `MemorySegment`s handed back (an `Entry`, or a
+  read result) are read out of the slots (pointing at the mmap, not at the
+  slots themselves) before the next call overwrites them — true even for a
+  `Mapper` callback that reenters the same cursor/txn, since its result is
+  extracted before the callback runs, not after.
+  `LmdbTxn#get(..., Mapper)` still opens one small per-call `Arena` — not for
+  the key, only to scope the value view handed to `mapper` so it becomes
+  inaccessible the instant the call returns (see the segment-lifetime bullet
+  below); reusing a `LmdbTxn`-lifetime `Arena` there instead would leak that
+  guarantee across the whole transaction, not just the one call. Write-side
+  keyed overloads (`put`/`delete`) keep their per-call `Arena` — key *and*
+  data content both vary by call there, and the write path wasn't the
+  diagnosed bottleneck (`benchmark/WriteBenchmark` already tracked lmdbjava
+  within ~2–15%).
 - All native handles live in `Bindings`; `size_t` maps to `JAVA_LONG` (LP64).
   LMDB return codes are `int`: `0` (`MDB_SUCCESS`) or an error — positive
   values are `errno` codes, negative values are LMDB's own `MDB_*` codes.

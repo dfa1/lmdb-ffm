@@ -7,6 +7,7 @@ import java.util.Objects;
 import java.util.Set;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 /// A cursor for navigating a database within a transaction — wraps `MDB_cursor*`.
@@ -39,17 +40,22 @@ public final class LmdbCursor extends NativeObject {
     public record Entry(MemorySegment key, MemorySegment data) {
     }
 
-    // Reused across every no-key get(LmdbCursorOp) call: FIRST/NEXT/LAST/PREV
-    // take no caller-supplied key, so these two 16-byte MDB_val out-param
-    // slots can live for the cursor's whole lifetime instead of being
-    // allocated (inside a freshly opened Arena) on every single call — the
-    // dominant cost of a tight scan loop otherwise. Safe to reuse: LMDB only
-    // ever writes through these pointers, and the MemorySegment handed back
-    // in an Entry is read out of them (LmdbVal.data) before the next call
-    // overwrites their fields, exactly like reading any other out-parameter.
+    // Reused across every get(LmdbCursorOp[, key]) call, keyed or not: these
+    // two 16-byte MDB_val out-param slots can live for the cursor's whole
+    // lifetime instead of being allocated (inside a freshly opened Arena) on
+    // every single call — the dominant cost of a tight scan or point-lookup
+    // loop otherwise. Safe to reuse: LMDB only ever writes through these
+    // pointers, and the MemorySegment handed back in an Entry is read out of
+    // them (LmdbVal.data) before the next call overwrites their fields,
+    // exactly like reading any other out-parameter.
     private final Arena arena = Arena.ofConfined();
     private final MemorySegment keyVal = LmdbVal.allocate(arena);
     private final MemorySegment dataVal = LmdbVal.allocate(arena);
+
+    // Backing storage for the byte[]-key get(LmdbCursorOp, byte[]) overload's
+    // copied key content — grown by doubling as needed (LmdbVal.growBuffer),
+    // never reallocated per call once a caller's key sizes stabilize.
+    private MemorySegment keyBuffer;
 
     private LmdbCursor(MemorySegment ptr) {
         super(ptr);
@@ -98,17 +104,16 @@ public final class LmdbCursor extends NativeObject {
     public Entry get(LmdbCursorOp op, byte[] key) {
         Objects.requireNonNull(op, "op");
         Objects.requireNonNull(key, "key");
-        try (Arena scratch = Arena.ofConfined()) {
-            MemorySegment keyVal = LmdbVal.of(scratch, key);
-            MemorySegment dataVal = LmdbVal.allocate(scratch);
-            int code;
-            try {
-                code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
-            } catch (Throwable t) {
-                throw NativeCall.rethrow(t);
-            }
-            return NativeCall.checkFound(code) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
+        keyBuffer = LmdbVal.growBuffer(arena, keyBuffer, Math.max(key.length, 1));
+        MemorySegment.copy(key, 0, keyBuffer, JAVA_BYTE, 0, key.length);
+        LmdbVal.set(keyVal, keyBuffer.asSlice(0, key.length));
+        int code;
+        try {
+            code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
         }
+        return NativeCall.checkFound(code) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
     }
 
     /// [#get(LmdbCursorOp, byte[])] with a zero-copy key.
@@ -121,17 +126,14 @@ public final class LmdbCursor extends NativeObject {
     public Entry get(LmdbCursorOp op, MemorySegment key) {
         Objects.requireNonNull(op, "op");
         NativeCall.requireNative(key, "key");
-        try (Arena scratch = Arena.ofConfined()) {
-            MemorySegment keyVal = LmdbVal.of(scratch, key);
-            MemorySegment dataVal = LmdbVal.allocate(scratch);
-            int code;
-            try {
-                code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
-            } catch (Throwable t) {
-                throw NativeCall.rethrow(t);
-            }
-            return NativeCall.checkFound(code) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
+        LmdbVal.set(keyVal, key);
+        int code;
+        try {
+            code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
         }
+        return NativeCall.checkFound(code) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
     }
 
     /// [#get(LmdbCursorOp, MemorySegment)] for a direct [ByteBuffer] key. The
