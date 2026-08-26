@@ -4,15 +4,15 @@ import java.lang.foreign.MemorySegment;
 
 /// Callback invoked by [LmdbTxn#get(LmdbDbi, byte[], Mapper)] (and its
 /// `MemorySegment`-key overload) with a zero-copy view of the stored value —
-/// no `byte[]` copy, no allocation for the value itself.
+/// no `byte[]` copy for the value itself.
 ///
-/// The segment is read-only and bound to an arena that closes as soon as
-/// [#map(MemorySegment)] returns, so it — and any view derived from it — must
-/// not be retained past the call. This is tighter than
-/// [LmdbTxn#getSegment(LmdbDbi, byte[])]'s segment, which stays valid for the
-/// rest of the transaction: use `Mapper` when the value only needs to be
-/// parsed into a plain Java result (a `String`, a record, a checksum, ...) and
-/// there is no reason to keep a raw `MemorySegment` around afterward.
+/// The segment is read-only and, like [LmdbTxn#getSegment(LmdbDbi, byte[])]'s,
+/// stays valid for the rest of the transaction (or until the entry is
+/// overwritten/deleted) — nothing stops [#map(MemorySegment)] from retaining
+/// it past the call if a caller chooses to. Use `Mapper` when the value only
+/// needs to be parsed into a plain Java result (a `String`, a record, a
+/// checksum, ...) right there in the callback, with no separate `get`/`byte[]`
+/// round trip.
 ///
 /// @param <R> the type produced from mapping the value
 @FunctionalInterface

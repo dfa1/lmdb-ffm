@@ -243,11 +243,10 @@ public final class LmdbTxn extends NativeObject {
     }
 
     /// Zero-copy read that maps the stored value straight to a result via
-    /// `mapper`, with no `byte[]` copy and no [MemorySegment] left over
-    /// afterward to manage: unlike [#getSegment(LmdbDbi, byte[])], the view
-    /// passed to `mapper` becomes inaccessible the instant this call returns
-    /// (see [Mapper]). Use this when the value only needs to be parsed into a
-    /// plain result — a `String`, a record, a checksum.
+    /// `mapper`, with no `byte[]` copy: unlike [#get(LmdbDbi, byte[])], there
+    /// is no heap array to allocate for the value (see [Mapper]). Use this
+    /// when the value only needs to be parsed into a plain result — a
+    /// `String`, a record, a checksum.
     ///
     /// @param <R>    the type produced by `mapper`
     /// @param dbi    the database to read from
@@ -263,9 +262,7 @@ public final class LmdbTxn extends NativeObject {
         if (!getInto(dbi, keyVal, dataVal)) {
             return null;
         }
-        try (Arena scoped = Arena.ofConfined()) {
-            return mapValue(scoped, dataVal, mapper);
-        }
+        return mapValue(dataVal, mapper);
     }
 
     /// [#get(LmdbDbi, byte[], Mapper)] with a zero-copy key.
@@ -285,9 +282,7 @@ public final class LmdbTxn extends NativeObject {
         if (!getInto(dbi, keyVal, dataVal)) {
             return null;
         }
-        try (Arena scoped = Arena.ofConfined()) {
-            return mapValue(scoped, dataVal, mapper);
-        }
+        return mapValue(dataVal, mapper);
     }
 
     /// [#get(LmdbDbi, byte[], Mapper)] for a direct [ByteBuffer] key — see
@@ -304,8 +299,8 @@ public final class LmdbTxn extends NativeObject {
         return get(dbi, MemorySegment.ofBuffer(key), mapper);
     }
 
-    private static <R> R mapValue(Arena arena, MemorySegment dataVal, Mapper<R> mapper) {
-        R result = mapper.map(LmdbVal.dataScoped(arena, dataVal));
+    private static <R> R mapValue(MemorySegment dataVal, Mapper<R> mapper) {
+        R result = mapper.map(LmdbVal.data(dataVal));
         return Objects.requireNonNull(result, "Mapper.map(MemorySegment) must not return null");
     }
 

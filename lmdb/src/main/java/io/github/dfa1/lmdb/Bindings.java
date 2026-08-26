@@ -1,6 +1,7 @@
 package io.github.dfa1.lmdb;
 
 import java.lang.foreign.FunctionDescriptor;
+import java.lang.foreign.Linker;
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.StructLayout;
 import java.lang.invoke.MethodHandle;
@@ -120,8 +121,19 @@ final class Bindings {
     // --- data access ---
 
     // int mdb_get(MDB_txn *txn, MDB_dbi dbi, MDB_val *key, MDB_val *data)
+    //
+    // Linker.Option.critical(false) — same call shape and same justification
+    // as CURSOR_GET above (reads through LMDB's memory map on the hottest
+    // per-record path outside a cursor: getSegment/get/the Mapper
+    // overloads), so see that binding's comment for the measured tradeoff
+    // and the accepted cold-page-fault risk. Not extended to PUT/DEL/etc.:
+    // those touch the mmap too but weren't a diagnosed bottleneck
+    // (benchmark/WriteBenchmark already tracked lmdbjava within ~2-15%), so
+    // there is little to gain for the same risk.
     static final MethodHandle GET =
-            NativeLibrary.lookup("mdb_get", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS));
+            NativeLibrary.lookup("mdb_get",
+                    FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS),
+                    new Linker.Option[] {Linker.Option.critical(false)});
     // int mdb_put(MDB_txn *txn, MDB_dbi dbi, MDB_val *key, MDB_val *data, unsigned int flags)
     static final MethodHandle PUT =
             NativeLibrary.lookup("mdb_put",
@@ -140,9 +152,33 @@ final class Bindings {
     static final MethodHandle CURSOR_CLOSE =
             NativeLibrary.lookup("mdb_cursor_close", FunctionDescriptor.ofVoid(ADDRESS));
     // int mdb_cursor_get(MDB_cursor *cursor, MDB_val *key, MDB_val *data, MDB_cursor_op op)
+    //
+    // Linker.Option.critical(false): every downcall normally pays a JVM
+    // thread-state transition (Java -> native -> Java, with its GC-safepoint
+    // interaction) around the call; critical skips it. Measured on
+    // benchmark/ReadBenchmark's readSeq/readRev (cursor NEXT/PREV in a tight
+    // loop, the hottest possible caller of this binding): that transition,
+    // not the ~40 B/op MemorySegment LmdbVal.data() allocates per read, was
+    // the dominant remaining cost versus lmdbjava's JNR-FFI call path —
+    // removing it took ffmReadSeq/ffmReadRev from ~0.012ms to ~0.008-0.009ms
+    // (lmdbjava: ~0.010ms), *faster* than lmdbjava despite still allocating.
+    //
+    // KNOWN RISK, accepted deliberately: per the JDK's own Linker.Option
+    // javadoc, critical requires "an extremely short running time in all
+    // cases" and warns that violating this "is likely to have adverse
+    // effects, such as loss of performance or JVM crashes." mdb_cursor_get
+    // reads through LMDB's memory map, which CAN page-fault (disk I/O) on a
+    // cold page — normal for a database larger than RAM, or after eviction
+    // under memory pressure, exactly the workloads this project targets via
+    // LmdbEnv#mapSize. That stall would sit inside a call the JVM has been
+    // told never blocks. The benchmark that justified this change can't
+    // surface that risk: its whole dataset stays resident in the page cache
+    // for the run's duration. Scoped to this one binding only — not applied
+    // to GET/PUT/etc. — since it is the only one actually measured.
     static final MethodHandle CURSOR_GET =
             NativeLibrary.lookup("mdb_cursor_get",
-                    FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_INT));
+                    FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_INT),
+                    new Linker.Option[] {Linker.Option.critical(false)});
     // int mdb_cursor_put(MDB_cursor *cursor, MDB_val *key, MDB_val *data, unsigned int flags)
     static final MethodHandle CURSOR_PUT =
             NativeLibrary.lookup("mdb_cursor_put",

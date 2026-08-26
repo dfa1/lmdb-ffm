@@ -14,10 +14,10 @@ practice, but the header is what the linked binary actually implements.
 The differentiator is the **zero-copy read path**: `mdb_get`/cursor reads hand
 back a `MemorySegment` that points directly into the memory-mapped database —
 no `byte[]` copy — valid for the lifetime of the enclosing read transaction.
-`LmdbTxn#get(LmdbDbi, byte[], Mapper)` narrows that further: the view is bound
-to a `mapper`-scoped arena, so it becomes inaccessible the instant the call
-returns rather than merely being documented as such — useful when the value
-just needs parsing into a plain result, not a `MemorySegment` to manage.
+`LmdbTxn#get(LmdbDbi, byte[], Mapper)` shares that same lifetime rather than a
+separate, tighter one — useful when the value just needs parsing into a plain
+result right there in the callback, with no separate `byte[]`/`MemorySegment`
+to manage afterward.
 
 ## Layout
 
@@ -86,15 +86,50 @@ Built `.dylib`/`.so`/`.dll` are git-ignored; they are regenerated from the submo
   slots themselves) before the next call overwrites them — true even for a
   `Mapper` callback that reenters the same cursor/txn, since its result is
   extracted before the callback runs, not after.
-  `LmdbTxn#get(..., Mapper)` still opens one small per-call `Arena` — not for
-  the key, only to scope the value view handed to `mapper` so it becomes
-  inaccessible the instant the call returns (see the segment-lifetime bullet
-  below); reusing a `LmdbTxn`-lifetime `Arena` there instead would leak that
-  guarantee across the whole transaction, not just the one call. Write-side
-  keyed overloads (`put`/`delete`) keep their per-call `Arena` — key *and*
-  data content both vary by call there, and the write path wasn't the
-  diagnosed bottleneck (`benchmark/WriteBenchmark` already tracked lmdbjava
-  within ~2–15%).
+  `LmdbTxn#get(..., Mapper)` used to additionally open one small per-call
+  `Arena` purely to make the value view handed to `mapper` inaccessible the
+  instant the call returned. `benchmark/ReadBenchmark` showed that Arena's
+  open/close cost more than the tiny `MemorySegment` it was scoping (`readKeySegmentMapper`
+  measured slower than plain `readKeySegment`, despite allocating far less),
+  so it was dropped — the callback's view now shares the same
+  transaction-length lifetime as every other zero-copy read (see the
+  segment-lifetime bullet below), and a caller may retain it past the call if
+  it chooses to. Write-side keyed overloads (`put`/`delete`) still keep their
+  per-call `Arena` — key *and* data content both vary by call there, and the
+  write path wasn't the diagnosed bottleneck (`benchmark/WriteBenchmark`
+  already tracked lmdbjava within ~2–15%).
+- `Bindings#CURSOR_GET` and `#GET` (only — not `PUT`/`DEL`/any other binding)
+  link with `Linker.Option.critical(false)`, skipping the JVM's thread-state
+  transition normally paid around every downcall. `benchmark/ReadBenchmark`'s
+  `readSeq`/`readRev` (`mdb_cursor_get` in a tight loop, `CURSOR_GET`'s
+  hottest caller) showed that transition — not the ~40 B/op `MemorySegment`
+  `LmdbVal.data()` allocates per read — was the dominant cost versus
+  lmdbjava's JNR-FFI path: removing it took those benchmarks from ~0.012ms to
+  ~0.008–0.009ms (lmdbjava: ~0.010ms), faster than lmdbjava despite still
+  allocating. `GET` (`mdb_get`, backing `getSegment`/`get`/the `Mapper`
+  overloads) got the same treatment for the same reason, but the win is
+  smaller — ~2–8% (e.g. `ffmGetSegment` 0.091ms -> 0.089ms, already far ahead
+  of `lmdbjavaGet`'s 0.152ms before this) rather than `CURSOR_GET`'s
+  ~25–33%: `mdb_get` does a full B-tree search (`mdb_page_search`) per call,
+  real work the fixed transition cost is a smaller fraction of, unlike
+  `mdb_cursor_get`'s cheap `NEXT`/`PREV` (one step within an
+  already-positioned page). Both accepted deliberately, with a real known
+  risk: `critical` requires "an extremely short running time in all cases"
+  (JDK's own `Linker.Option` javadoc), warning that violating this "is likely
+  to have adverse effects, such as loss of performance or JVM crashes." A
+  page fault against a cold, memory-mapped page — normal for a database
+  larger than RAM, or after eviction, exactly the scale this project's
+  `LmdbEnv#mapSize` targets — sits inside a call the JVM now assumes never
+  blocks. The benchmarks that justified this can't surface that risk; their
+  dataset stays page-cache-resident for the whole run. Not extended to other
+  bindings without their own measurement — `PUT`/`CURSOR_PUT`/`DEL`/
+  `CURSOR_DEL` touch the mmap the same way but weren't a diagnosed bottleneck
+  (`benchmark/WriteBenchmark` already tracked lmdbjava within ~2–15%), and
+  everything else (`ENV_SYNC`, `TXN_COMMIT`, `TXN_BEGIN`, `STAT`/`ENV_STAT`,
+  environment/transaction/cursor/dbi lifecycle calls) is either not called
+  often enough to matter or, worse, can genuinely run long by design (a
+  writer-mutex wait, an `fsync`, a full-tree stat walk) — `critical` there
+  would violate its own precondition routinely, not just on a cold page.
 - All native handles live in `Bindings`; `size_t` maps to `JAVA_LONG` (LP64).
   LMDB return codes are `int`: `0` (`MDB_SUCCESS`) or an error — positive
   values are `errno` codes, negative values are LMDB's own `MDB_*` codes.
@@ -149,18 +184,20 @@ Built `.dylib`/`.so`/`.dll` are git-ignored; they are regenerated from the submo
   which the delegated-to method's own `requireNative` then rejects — so
   `ByteBuffer` overloads need no `requireNative` call of their own, the
   `MemorySegment` overload they forward to already has it.
-- Zero-copy reads return two different lifetimes for two different needs:
-  `getSegment`'s segment stays valid for the rest of the transaction (or
-  until the entry is overwritten/deleted), matching how long the caller might
-  reasonably want to hold a raw view; `get(..., Mapper)`'s segment is bound to
-  a call-scoped arena and becomes inaccessible the moment the callback
-  returns (`LmdbVal.dataScoped`, using the 3-arg `MemorySegment#reinterpret`
-  overload with a `null` cleanup — this view borrows from the mmap, it does
-  not own it, so the arena closing must not attempt to free it). Both share
-  one more hardening `LmdbVal.data` applies: the returned segment is always
-  `.asReadOnly()`, since writing through it would corrupt the mmap'd file in
-  place (`MDB_WRITEMAP`) or segfault the JVM (without it — the mapping is
-  `PROT_READ`).
+- Every zero-copy read shares one lifetime: `getSegment`, `get(..., Mapper)`,
+  and `LmdbCursor#get`/`#getValue` all hand back a segment (or, for `Mapper`,
+  pass one to the callback) that stays valid for the rest of the transaction
+  (or until the entry is overwritten/deleted) — no separate, tighter-scoped
+  variant. An earlier version bound `get(..., Mapper)`'s view to a call-scoped
+  `Arena` (`LmdbVal.dataScoped`, using the 3-arg `MemorySegment#reinterpret`
+  overload with a `null` cleanup, since the view borrows from the mmap rather
+  than owning it) so it became inaccessible the instant the callback
+  returned; that Arena's own open/close overhead outweighed the allocation it
+  was meant to save, so it was removed in favor of plain `LmdbVal.data`, same
+  as every other zero-copy read. `LmdbVal.data` applies one hardening across
+  all of them: the returned segment is always `.asReadOnly()`, since writing
+  through it would corrupt the mmap'd file in place (`MDB_WRITEMAP`) or
+  segfault the JVM (without it — the mapping is `PROT_READ`).
 - Run with `--enable-native-access=ALL-UNNAMED`.
 - `MDB_dbi` is a native `unsigned int` handle, not a pointer — `LmdbDbi` wraps
   it directly (see above), not a `NativeObject`; it needs no close, only

@@ -82,20 +82,6 @@ final class LmdbVal {
         return p.reinterpret(size(val)).asReadOnly();
     }
 
-    /// Like [#data], but the returned segment's liveness is additionally
-    /// bound to `arena`: accessing it after `arena` closes throws
-    /// [IllegalStateException] instead of silently reading through a stale
-    /// pointer. `null` cleanup is deliberate — this view borrows from the
-    /// memory map, it does not own it, so closing `arena` must not attempt to
-    /// free it. Used by [LmdbTxn]'s [Mapper]-based `get`, whose contract
-    /// requires the view to become inaccessible the moment the callback
-    /// returns, not merely documented as such.
-    @SuppressWarnings("restricted") // reinterpret needed: mv_data has no declared size until widened
-    static MemorySegment dataScoped(Arena arena, MemorySegment val) {
-        MemorySegment p = (MemorySegment) MV_DATA_HANDLE.get(val, 0L);
-        return p.reinterpret(size(val), arena, null).asReadOnly();
-    }
-
     static byte[] toByteArray(MemorySegment val) {
         int n = (int) size(val);
         byte[] out = new byte[n];

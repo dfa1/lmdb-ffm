@@ -32,10 +32,16 @@ final class NativeLibrary {
     private static final SymbolLookup LIB = SymbolLookup.libraryLookup(extractBundledLib(), Arena.ofAuto());
 
     static MethodHandle lookup(String name, FunctionDescriptor fd) {
+        return lookup(name, fd, new Linker.Option[0]);
+    }
+
+    // Lets a caller opt a specific binding into Linker.Option.critical — see
+    // Bindings#CURSOR_GET for the one binding that currently does, and why.
+    static MethodHandle lookup(String name, FunctionDescriptor fd, Linker.Option[] options) {
         return LINKER.downcallHandle(
                 LIB.find(name).orElseThrow(() ->
                         new UnsatisfiedLinkError("Symbol not found: " + name)),
-                fd);
+                fd, options);
     }
 
     private static String extractBundledLib() {

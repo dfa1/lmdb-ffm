@@ -519,7 +519,7 @@ class LmdbTxnTest {
         }
 
         @Test
-        void theMappedViewIsInaccessibleOnceGetReturns() {
+        void theMappedViewStaysValidForTheRestOfTheTransaction() {
             // Given a value put and committed
             LmdbDbi dbi;
             try (LmdbTxn txn = env.beginTxn()) {
@@ -528,19 +528,17 @@ class LmdbTxnTest {
                 txn.commit();
             }
 
-            // When a Mapper smuggles the raw view out by reference
-            AtomicReference<MemorySegment> leaked = new AtomicReference<>();
+            // When a Mapper retains the raw view by reference past the call
+            AtomicReference<MemorySegment> retained = new AtomicReference<>();
             try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                 txn.get(dbi, key("k"), v -> {
-                    leaked.set(v);
+                    retained.set(v);
                     return "captured";
                 });
-            }
 
-            // Then touching it after the call returns fails fast instead of reading
-            // through a dangling pointer — the view's arena closed with the call.
-            ThrowingCallable result = () -> leaked.get().get(JAVA_BYTE, 0);
-            assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+                // Then it is still readable, matching getSegment's lifetime
+                assertThat(retained.get().toArray(JAVA_BYTE)).isEqualTo(value("v"));
+            }
         }
     }
 
