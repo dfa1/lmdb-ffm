@@ -3,9 +3,9 @@
 
 Used by benchmark.yml to report lmdb-java (byte[], MemorySegment, Mapper)
 against lmdbjava on the same run. Unlike zstd-java's equivalent script, the
-contestant method names differ per benchmark class (GetBenchmark,
-PutBenchmark, CursorScanBenchmark), so columns are discovered from the
-results rather than hardcoded.
+contestant method names differ per benchmark class (ReadBenchmark,
+WriteBenchmark), so columns are discovered from the results rather than
+hardcoded.
 
 Usage:
   format-results.py <results.json>
@@ -28,7 +28,7 @@ def load(path):
         fqn = r["benchmark"]
         cls, method = fqn.rsplit(".", 1)
         cls = cls.rsplit(".", 1)[-1]
-        param = r.get("params", {}).get("entries", "-")
+        param = r.get("params", {}).get("num", "-")
         by_class.setdefault(cls, {}).setdefault(param, {})[method] = r["primaryMetric"]
         methods = methods_by_class.setdefault(cls, [])
         if method not in methods:
@@ -45,7 +45,7 @@ def fmt(metric):
 def print_table(cls, by_param, methods):
     print(f"#### {cls}")
     print()
-    print("| entries | " + " | ".join(methods) + " |")
+    print("| num | " + " | ".join(methods) + " |")
     print("|---|" + "---:|" * len(methods))
     for param in sorted(by_param, key=lambda p: (p == "-", int(p) if p != "-" else 0)):
         row = by_param[param]

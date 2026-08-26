@@ -48,8 +48,8 @@ jobs:
         shell: bash
         run: |
           ./mvnw -B -ntp -q -pl benchmark -am package -DskipTests
-          java -jar benchmark/target/benchmarks.jar '\.GetBenchmark\.' '\.PutBenchmark\.' '\.CursorScanBenchmark\.' \
-            -f 1 -wi 2 -i 5 -rf json -rff results.json
+          java -jar benchmark/target/benchmarks.jar '\.ReadBenchmark\.' '\.WriteBenchmark\.' \
+            -rf json -rff results.json
 
       - name: Report contestants (lmdb-java vs lmdbjava)
         if: always()
