@@ -131,7 +131,7 @@ Not yet bound (22):
 | `mdb_set_relctx` | Blocked (upcall) | Opaque context pointer for a relocation callback (`MDB_FIXEDMAP` only — a legacy, rarely-used mode) |
 | `mdb_set_relfunc` | Blocked (upcall) | The relocation callback itself, for the same legacy `MDB_FIXEDMAP` mode |
 | `mdb_reader_list` | Blocked (upcall) | Dumps the reader lock table — takes an `MDB_msg_func` callback, called once per line |
-| `mdb_env_set_assert` | Blocked (upcall) | Custom assertion-failure handler/logger |
+| `mdb_env_set_assert` | Dead on this build | Custom assertion-failure handler/logger — inert here: this project's native builds pass `-DNDEBUG` (see `scripts/build-lmdb.sh`), which compiles out `mdb_env_set_assert`'s store of the callback pointer entirely (`mdb.c`'s own `#ifndef NDEBUG` guard around it), so the callback could never fire. It also always ends in `abort()` even on a debug build, so there'd be no safe way to exercise it in this project's tests either way. |
 | `mdb_env_set_checksum` | Blocked (upcall) | Pluggable page-checksum hook (LMDB 1.x addition) |
 | `mdb_env_set_encrypt` | Blocked (upcall) | Pluggable page-encryption hook (LMDB 1.x addition) |
 | `mdb_modload` | Blocked (upcall) | Dynamically load a shared-library plugin supplying checksum/encryption functions |
