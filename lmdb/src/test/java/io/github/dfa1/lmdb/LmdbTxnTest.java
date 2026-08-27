@@ -272,6 +272,28 @@ class LmdbTxnTest {
                 assertThat(txn.dbiFlags(dbi)).contains(LmdbDbiFlag.DUPSORT);
             }
         }
+
+        @Test
+        void idReportsANonNegativeValue() {
+            // When a transaction is begun
+            try (LmdbTxn txn = env.beginTxn()) {
+                // Then it has a non-negative transaction ID
+                assertThat(txn.id()).isNotNegative();
+            }
+        }
+
+        @Test
+        void idOnAnEndedTransactionFails() {
+            // Given a committed transaction
+            LmdbTxn sut = env.beginTxn();
+            sut.commit();
+
+            // When its ID is read
+            ThrowingCallable result = sut::id;
+
+            // Then it fails fast rather than touching a freed native pointer
+            assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+        }
     }
 
     @Nested

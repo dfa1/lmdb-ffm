@@ -111,6 +111,9 @@ final class Bindings {
     // int mdb_env_copy2(MDB_env *env, const char *path, unsigned int flags)
     static final MethodHandle ENV_COPY2 =
             NativeLibrary.lookup("mdb_env_copy2", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
+    // int mdb_env_rollback(MDB_env *env, mdb_size_t txnid)
+    static final MethodHandle ENV_ROLLBACK =
+            NativeLibrary.lookup("mdb_env_rollback", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
 
     // --- transactions ---
 
@@ -136,6 +139,9 @@ final class Bindings {
     // int mdb_txn_flags(MDB_txn *txn, unsigned int *flags)
     static final MethodHandle TXN_FLAGS =
             NativeLibrary.lookup("mdb_txn_flags", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    // mdb_size_t mdb_txn_id(MDB_txn *txn)
+    static final MethodHandle TXN_ID =
+            NativeLibrary.lookup("mdb_txn_id", FunctionDescriptor.of(JAVA_LONG, ADDRESS));
 
     // --- databases ---
 

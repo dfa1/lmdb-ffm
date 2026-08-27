@@ -380,6 +380,37 @@ public final class LmdbEnv extends NativeObject {
         }
     }
 
+    /// Rolls back the last committed transaction, undoing its writes as if it
+    /// had never committed (`mdb_env_rollback`) — for two-phase commit
+    /// protocols only: use this when the local phase of a multi-phase
+    /// transaction has fully committed, but some other remote phase that had
+    /// successfully prepared has since failed to commit.
+    ///
+    /// `txnid` must be that exact transaction's [LmdbTxn#id()], captured
+    /// before its [LmdbTxn#commit()] (the transaction handle itself is freed
+    /// by commit). This must be called immediately after that commit — no
+    /// other operation may run on this environment, by any process, in
+    /// between — and must not be called twice in a row. It also can never
+    /// undo an environment's very first commit: LMDB rolls back to the
+    /// *other* of its two metapages, and that one is still in its unwritten
+    /// initial state until a second transaction commits.
+    ///
+    /// @param txnid the ID of the committed transaction to roll back
+    /// @throws LmdbException if the rollback fails, e.g. [LmdbErrorCode#CANT_ROLLBACK]
+    ///                        if a rollback was already done, there is no
+    ///                        other valid metapage to roll back to, or
+    ///                        another transaction has already been
+    ///                        committed over `txnid`
+    public void rollback(long txnid) {
+        int code;
+        try {
+            code = (int) Bindings.ENV_ROLLBACK.invokeExact(ptr(), txnid);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
+    }
+
     /// Begins a new read-write transaction with no parent.
     ///
     /// @return the new transaction

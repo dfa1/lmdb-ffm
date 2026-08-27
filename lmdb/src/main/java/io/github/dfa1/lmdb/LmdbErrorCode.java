@@ -70,7 +70,9 @@ public enum LmdbErrorCode {
     ENV_ENCRYPTION(-30776),
     /// Transaction is pending, cannot commit/abort/etc.
     TXN_PENDING(-30775),
-    /// Nested transaction to be rolled back, cannot commit.
+    /// [LmdbEnv#rollback(long)] can't roll back the given transaction — a
+    /// rollback was already done, there is no other valid metapage to roll
+    /// back to, or another transaction has already been committed over it.
     CANT_ROLLBACK(-30774),
     /// Database handles are being used by other transactions.
     DBIS_BUSY(-30773),

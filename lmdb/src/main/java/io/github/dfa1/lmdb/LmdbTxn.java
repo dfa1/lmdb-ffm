@@ -279,6 +279,23 @@ public final class LmdbTxn extends NativeObject {
         }
     }
 
+    /// This transaction's ID (`mdb_txn_id`) — the identifier of the snapshot
+    /// a read-only transaction sees, or of the write about to be committed.
+    /// Concurrent read-only transactions frequently share the same ID.
+    /// Needed by [LmdbEnv#rollback(long)], which must be given this ID
+    /// captured before this transaction's [#commit()] — the transaction
+    /// handle itself is freed by the time a caller could otherwise reach for it.
+    ///
+    /// @return this transaction's ID
+    /// @throws IllegalStateException if this transaction already ended
+    public long id() {
+        try {
+            return (long) Bindings.TXN_ID.invokeExact(ptr());
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+    }
+
     /// Zero-copy read: looks up `key` in `dbi` and returns the stored data as a
     /// [MemorySegment] pointing directly into the memory-mapped database — no
     /// copy. The segment is valid only until this transaction ends or the

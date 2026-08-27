@@ -411,4 +411,80 @@ class LmdbEnvTest {
             }
         }
     }
+
+    @Nested
+    class Rollback {
+
+        @Test
+        void undoesTheLastCommittedTransaction(@TempDir Path dir) {
+            // Given two committed write transactions — a first commit is
+            // needed so the environment has a valid earlier metapage to roll
+            // back to; mdb_env_rollback can't undo an environment's very
+            // first commit
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                LmdbDbi dbi;
+                try (LmdbTxn txn = sut.beginTxn()) {
+                    dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                    txn.put(dbi, "seed".getBytes(), "1".getBytes(), Set.of());
+                    txn.commit();
+                }
+                long txnid;
+                try (LmdbTxn txn = sut.beginTxn()) {
+                    txn.put(dbi, "k".getBytes(), "v".getBytes(), Set.of());
+                    txnid = txn.id();
+                    txn.commit();
+                }
+
+                // When the second transaction is rolled back immediately afterward
+                sut.rollback(txnid);
+
+                // Then its write is undone, while the first transaction's write survives
+                try (LmdbTxn txn = sut.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                    assertThat(txn.get(dbi, "k".getBytes())).isNull();
+                    assertThat(txn.get(dbi, "seed".getBytes())).isEqualTo("1".getBytes());
+                }
+            }
+        }
+
+        @Test
+        void rollingBackTheSameTransactionTwiceFails(@TempDir Path dir) {
+            // Given a committed transaction (preceded by an earlier one, so
+            // there is a valid earlier metapage to roll back to) already
+            // rolled back once — each commit writes a key, since an empty
+            // write transaction may not advance LMDB's metapage txnid at all
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                LmdbDbi dbi;
+                try (LmdbTxn txn = sut.beginTxn()) {
+                    dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                    txn.put(dbi, "seed".getBytes(), "1".getBytes(), Set.of());
+                    txn.commit();
+                }
+                long txnid;
+                try (LmdbTxn txn = sut.beginTxn()) {
+                    txn.put(dbi, "k".getBytes(), "v".getBytes(), Set.of());
+                    txnid = txn.id();
+                    txn.commit();
+                }
+                sut.rollback(txnid);
+
+                // When rolled back again
+                ThrowingCallable result = () -> sut.rollback(txnid);
+
+                // Then it fails rather than corrupting the environment further
+                assertThatThrownBy(result).isInstanceOf(LmdbException.class);
+            }
+        }
+
+        @Test
+        void rollingBackATxnidThatWasNeverCommittedFails(@TempDir Path dir) {
+            // Given a freshly opened environment
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                // When rolled back with a txnid that was never committed
+                ThrowingCallable result = () -> sut.rollback(999_999L);
+
+                // Then it fails rather than silently doing nothing
+                assertThatThrownBy(result).isInstanceOf(LmdbException.class);
+            }
+        }
+    }
 }
