@@ -6,8 +6,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -318,6 +321,93 @@ class LmdbEnvTest {
 
                 // Then the native call fails rather than silently creating it
                 assertThatThrownBy(result).isInstanceOf(LmdbException.class);
+            }
+        }
+    }
+
+    @Nested
+    class ReaderList {
+
+        @Test
+        void reportsNoActiveReadersOnAFreshEnvironment(@TempDir Path dir) {
+            // Given a freshly opened environment with no read transactions
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                List<String> lines = new ArrayList<>();
+
+                // When the reader lock table is dumped
+                sut.listReaders(line -> {
+                    lines.add(line);
+                    return true;
+                });
+
+                // Then a single explanatory line is reported, no header
+                assertThat(lines).containsExactly("(no active readers)\n");
+            }
+        }
+
+        @Test
+        void reportsAnActiveReaderWithAHeaderLine(@TempDir Path dir) {
+            // Given an environment with one active read-only transaction
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of());
+                    LmdbTxn _ = sut.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                List<String> lines = new ArrayList<>();
+
+                // When the reader lock table is dumped
+                sut.listReaders(line -> {
+                    lines.add(line);
+                    return true;
+                });
+
+                // Then a header line is followed by one line for the active
+                // reader, which reports this process's own pid
+                assertThat(lines).hasSize(2);
+                assertThat(lines.get(0)).isEqualTo("    pid     thread     txnid\n");
+                assertThat(lines.get(1)).contains(String.valueOf(ProcessHandle.current().pid()));
+            }
+        }
+
+        @Test
+        void returningFalseStopsTheDumpEarly(@TempDir Path dir) {
+            // Given an environment with an active reader, so more than one line would be reported
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of());
+                    LmdbTxn _ = sut.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                AtomicInteger calls = new AtomicInteger();
+
+                // When the handler asks to stop after the first line
+                sut.listReaders(line -> {
+                    calls.incrementAndGet();
+                    return false;
+                });
+
+                // Then it is invoked exactly once, not for every line
+                assertThat(calls.get()).isEqualTo(1);
+            }
+        }
+
+        @Test
+        void aHandlerThatThrowsDoesNotCrashTheJvm(@TempDir Path dir) {
+            // Given a freshly opened environment
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                // When the handler throws
+                ThrowingCallable result = () -> sut.listReaders(line -> {
+                    throw new RuntimeException("boom");
+                });
+
+                // Then the exception is contained (an upcall cannot propagate a
+                // Java exception into LMDB's C code) rather than crashing the process
+                assertThatCode(result).doesNotThrowAnyException();
+            }
+        }
+
+        @Test
+        void rejectsANullHandler(@TempDir Path dir) {
+            // Given an open environment
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                // When listing readers with a null handler
+                ThrowingCallable result = () -> sut.listReaders(null);
+
+                // Then it fails fast
+                assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
             }
         }
     }

@@ -167,6 +167,14 @@ final class Bindings {
     static final MethodHandle SET_DUPSORT =
             NativeLibrary.lookup("mdb_set_dupsort", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS));
 
+    // typedef int (MDB_msg_func)(const char *msg, void *ctx) — the shape of
+    // the upcall stub LmdbMessageHandlers builds from a caller's
+    // LmdbMessageHandler, not a downcall handle like every other constant here.
+    static final FunctionDescriptor MSG_FUNC_DESCRIPTOR = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS);
+    // int mdb_reader_list(MDB_env *env, MDB_msg_func *func, void *ctx)
+    static final MethodHandle READER_LIST =
+            NativeLibrary.lookup("mdb_reader_list", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+
     // --- data access ---
 
     // int mdb_get(MDB_txn *txn, MDB_dbi dbi, MDB_val *key, MDB_val *data)

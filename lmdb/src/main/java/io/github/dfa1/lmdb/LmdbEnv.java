@@ -428,6 +428,27 @@ public final class LmdbEnv extends NativeObject {
         }
     }
 
+    /// Dumps the reader lock table, one line at a time, to `handler`
+    /// (`mdb_reader_list`) — a header line followed by one line per active
+    /// reader slot, or a single explanatory line if there are none.
+    ///
+    /// @param handler receives each line; return `false` from it to stop early
+    public void listReaders(LmdbMessageHandler handler) {
+        Objects.requireNonNull(handler, "handler");
+        try (Arena scratch = Arena.ofConfined()) {
+            MemorySegment stub = LmdbMessageHandlers.upcallStub(scratch, handler);
+            // The returned int only ever reflects handler's own continue/stop
+            // protocol (see LmdbMessageHandlers#invoke), never a genuine
+            // MDB_* error code, so it is intentionally discarded rather than
+            // passed to NativeCall.check.
+            try {
+                int ignored = (int) Bindings.READER_LIST.invokeExact(ptr(), stub, MemorySegment.NULL);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+        }
+    }
+
     /// Builds a native upcall stub trampolining into `comparator`, kept alive
     /// for this environment's whole lifetime — see
     /// [LmdbTxn#setComparator(LmdbDbi, LmdbComparator)].

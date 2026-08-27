@@ -96,24 +96,30 @@ for the build.
 
 ## API coverage
 
-43 of `lmdb.h`'s 65 `mdb_*` functions are bound today:
+44 of `lmdb.h`'s 65 `mdb_*` functions are bound today:
 
 | Area | Bound |
 |---|---|
-| Environment | `mdb_env_create`, `mdb_env_open`, `mdb_env_close`, `mdb_env_set_mapsize`, `mdb_env_set_maxdbs`, `mdb_env_set_maxreaders`, `mdb_env_get_maxreaders`, `mdb_env_set_pagesize`, `mdb_env_get_maxkeysize`, `mdb_env_sync`, `mdb_env_set_flags`, `mdb_env_get_flags`, `mdb_env_get_path`, `mdb_env_get_fd`, `mdb_env_stat`, `mdb_env_info`, `mdb_env_copy2` |
+| Environment | `mdb_env_create`, `mdb_env_open`, `mdb_env_close`, `mdb_env_set_mapsize`, `mdb_env_set_maxdbs`, `mdb_env_set_maxreaders`, `mdb_env_get_maxreaders`, `mdb_env_set_pagesize`, `mdb_env_get_maxkeysize`, `mdb_env_sync`, `mdb_env_set_flags`, `mdb_env_get_flags`, `mdb_env_get_path`, `mdb_env_get_fd`, `mdb_env_stat`, `mdb_env_info`, `mdb_env_copy2`, `mdb_reader_list` |
 | Transactions | `mdb_txn_begin`, `mdb_txn_commit`, `mdb_txn_abort`, `mdb_txn_prepare`, `mdb_txn_reset`, `mdb_txn_renew`, `mdb_txn_flags` |
 | Databases | `mdb_dbi_open`, `mdb_dbi_close`, `mdb_dbi_flags`, `mdb_drop`, `mdb_set_compare`, `mdb_set_dupsort` |
 | Data access | `mdb_get`, `mdb_put`, `mdb_del`, `mdb_stat` |
 | Cursors | `mdb_cursor_open`, `mdb_cursor_close`, `mdb_cursor_get`, `mdb_cursor_put`, `mdb_cursor_del`, `mdb_cursor_count`, `mdb_cursor_renew` |
 | Misc | `mdb_version`, `mdb_strerror` |
 
-`mdb_set_compare`/`mdb_set_dupsort` take a `MDB_cmp_func*` — LMDB calls back
-into a Java [LmdbComparator](lmdb/src/main/java/io/github/dfa1/lmdb/LmdbComparator.java)
-through a `Linker.upcallStub` trampoline (see
+`mdb_set_compare`/`mdb_set_dupsort` (`MDB_cmp_func*`) and `mdb_reader_list`
+(`MDB_msg_func*`) all take a function pointer LMDB calls back into — a Java
+[LmdbComparator](lmdb/src/main/java/io/github/dfa1/lmdb/LmdbComparator.java)
+or [LmdbMessageHandler](lmdb/src/main/java/io/github/dfa1/lmdb/LmdbMessageHandler.java)
+respectively — through a `Linker.upcallStub` trampoline (see
 [#1](https://github.com/dfa1/lmdb-ffm/issues/1)) rather than the plain
-`downcallHandle` the rest of this table uses.
+`downcallHandle` the rest of this table uses. The two differ in the
+trampoline's lifetime: a comparator must keep working for as long as the
+`dbi` it was installed on is used, so its stub lives in an `Arena` scoped to
+the `LmdbEnv`; `mdb_reader_list` only ever calls back synchronously within
+the one call that installs it, so its stub is scoped to that single call.
 
-Not yet bound (22):
+Not yet bound (21):
 
 | Function | Category | Purpose |
 |---|---|---|
@@ -130,7 +136,6 @@ Not yet bound (22):
 | `mdb_env_rollback` | Straightforward | Roll the environment back to a historical `txnid` (pairs with incremental dump for recovery) |
 | `mdb_set_relctx` | Blocked (upcall) | Opaque context pointer for a relocation callback (`MDB_FIXEDMAP` only — a legacy, rarely-used mode) |
 | `mdb_set_relfunc` | Blocked (upcall) | The relocation callback itself, for the same legacy `MDB_FIXEDMAP` mode |
-| `mdb_reader_list` | Blocked (upcall) | Dumps the reader lock table — takes an `MDB_msg_func` callback, called once per line |
 | `mdb_env_set_assert` | Dead on this build | Custom assertion-failure handler/logger — inert here: this project's native builds pass `-DNDEBUG` (see `scripts/build-lmdb.sh`), which compiles out `mdb_env_set_assert`'s store of the callback pointer entirely (`mdb.c`'s own `#ifndef NDEBUG` guard around it), so the callback could never fire. It also always ends in `abort()` even on a debug build, so there'd be no safe way to exercise it in this project's tests either way. |
 | `mdb_env_set_checksum` | Blocked (upcall) | Pluggable page-checksum hook (LMDB 1.x addition) |
 | `mdb_env_set_encrypt` | Blocked (upcall) | Pluggable page-encryption hook (LMDB 1.x addition) |
