@@ -611,6 +611,49 @@ public final class LmdbTxn extends NativeObject {
         return delete(dbi, MemorySegment.ofBuffer(key), MemorySegment.ofBuffer(data));
     }
 
+    /// Installs a custom key-ordering function for `dbi` (`mdb_set_compare`),
+    /// replacing LMDB's default lexicographic byte comparison. See
+    /// [LmdbComparator] for the correctness requirements this carries — in
+    /// particular, it must be called before any data is read or written
+    /// through `dbi`, and the exact same ordering must be used every time
+    /// this database is opened, by every program that opens it.
+    ///
+    /// @param dbi        the database to set the comparator for
+    /// @param comparator the custom key-ordering function
+    /// @throws LmdbException if the native call fails
+    public void setComparator(LmdbDbi dbi, LmdbComparator comparator) {
+        Objects.requireNonNull(dbi, "dbi");
+        Objects.requireNonNull(comparator, "comparator");
+        MemorySegment stub = env.upcallStub(comparator);
+        int code;
+        try {
+            code = (int) Bindings.SET_COMPARE.invokeExact(ptr(), dbi.handle(), stub);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
+    }
+
+    /// Like [#setComparator(LmdbDbi, LmdbComparator)], but orders the
+    /// multiple values stored under one key in an `MDB_DUPSORT` database
+    /// (`mdb_set_dupsort`) instead of the keys themselves.
+    ///
+    /// @param dbi        the `MDB_DUPSORT` database to set the comparator for
+    /// @param comparator the custom value-ordering function
+    /// @throws LmdbException if the native call fails
+    public void setDupComparator(LmdbDbi dbi, LmdbComparator comparator) {
+        Objects.requireNonNull(dbi, "dbi");
+        Objects.requireNonNull(comparator, "comparator");
+        MemorySegment stub = env.upcallStub(comparator);
+        int code;
+        try {
+            code = (int) Bindings.SET_DUPSORT.invokeExact(ptr(), dbi.handle(), stub);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
+    }
+
     /// Opens a cursor on `dbi` within this transaction.
     ///
     /// @param dbi the database to navigate

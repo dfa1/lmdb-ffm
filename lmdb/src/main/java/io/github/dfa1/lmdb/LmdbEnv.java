@@ -36,6 +36,14 @@ public final class LmdbEnv extends NativeObject {
     /// creates, matching upstream `mdb_stat`/`mdb_dump`'s own default.
     private static final int DEFAULT_MODE = 0644;
 
+    // Backs every upcall stub built by #upcallStub(LmdbComparator) for
+    // LmdbTxn#setComparator/#setDupComparator. Those stubs must stay valid
+    // for as long as LMDB may call back into them — every future access to
+    // the dbi they were installed on, across every transaction, not just the
+    // call that installed them — so this is scoped to the environment's own
+    // lifetime rather than a per-call Arena.
+    private final Arena arena = Arena.ofConfined();
+
     private LmdbEnv(MemorySegment ptr) {
         super(ptr);
     }
@@ -420,8 +428,19 @@ public final class LmdbEnv extends NativeObject {
         }
     }
 
+    /// Builds a native upcall stub trampolining into `comparator`, kept alive
+    /// for this environment's whole lifetime — see
+    /// [LmdbTxn#setComparator(LmdbDbi, LmdbComparator)].
+    MemorySegment upcallStub(LmdbComparator comparator) {
+        return LmdbComparators.upcallStub(arena, comparator);
+    }
+
     @Override
     protected void tryClose(MemorySegment ptr) throws Throwable {
-        Bindings.ENV_CLOSE.invokeExact(ptr);
+        try {
+            Bindings.ENV_CLOSE.invokeExact(ptr);
+        } finally {
+            arena.close();
+        }
     }
 }

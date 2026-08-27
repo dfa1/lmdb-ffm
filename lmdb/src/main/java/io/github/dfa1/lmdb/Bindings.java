@@ -156,6 +156,17 @@ final class Bindings {
     static final MethodHandle STAT =
             NativeLibrary.lookup("mdb_stat", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS));
 
+    // typedef int (MDB_cmp_func)(const MDB_val *a, const MDB_val *b) — the
+    // shape of the upcall stub LmdbComparators builds from a caller's
+    // LmdbComparator, not a downcall handle like every other constant here.
+    static final FunctionDescriptor CMP_FUNC_DESCRIPTOR = FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS);
+    // int mdb_set_compare(MDB_txn *txn, MDB_dbi dbi, MDB_cmp_func *cmp)
+    static final MethodHandle SET_COMPARE =
+            NativeLibrary.lookup("mdb_set_compare", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS));
+    // int mdb_set_dupsort(MDB_txn *txn, MDB_dbi dbi, MDB_cmp_func *cmp)
+    static final MethodHandle SET_DUPSORT =
+            NativeLibrary.lookup("mdb_set_dupsort", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS));
+
     // --- data access ---
 
     // int mdb_get(MDB_txn *txn, MDB_dbi dbi, MDB_val *key, MDB_val *data)

@@ -96,18 +96,24 @@ for the build.
 
 ## API coverage
 
-41 of `lmdb.h`'s 65 `mdb_*` functions are bound today:
+43 of `lmdb.h`'s 65 `mdb_*` functions are bound today:
 
 | Area | Bound |
 |---|---|
 | Environment | `mdb_env_create`, `mdb_env_open`, `mdb_env_close`, `mdb_env_set_mapsize`, `mdb_env_set_maxdbs`, `mdb_env_set_maxreaders`, `mdb_env_get_maxreaders`, `mdb_env_set_pagesize`, `mdb_env_get_maxkeysize`, `mdb_env_sync`, `mdb_env_set_flags`, `mdb_env_get_flags`, `mdb_env_get_path`, `mdb_env_get_fd`, `mdb_env_stat`, `mdb_env_info`, `mdb_env_copy2` |
 | Transactions | `mdb_txn_begin`, `mdb_txn_commit`, `mdb_txn_abort`, `mdb_txn_prepare`, `mdb_txn_reset`, `mdb_txn_renew`, `mdb_txn_flags` |
-| Databases | `mdb_dbi_open`, `mdb_dbi_close`, `mdb_dbi_flags`, `mdb_drop` |
+| Databases | `mdb_dbi_open`, `mdb_dbi_close`, `mdb_dbi_flags`, `mdb_drop`, `mdb_set_compare`, `mdb_set_dupsort` |
 | Data access | `mdb_get`, `mdb_put`, `mdb_del`, `mdb_stat` |
 | Cursors | `mdb_cursor_open`, `mdb_cursor_close`, `mdb_cursor_get`, `mdb_cursor_put`, `mdb_cursor_del`, `mdb_cursor_count`, `mdb_cursor_renew` |
 | Misc | `mdb_version`, `mdb_strerror` |
 
-Not yet bound (24):
+`mdb_set_compare`/`mdb_set_dupsort` take a `MDB_cmp_func*` — LMDB calls back
+into a Java [LmdbComparator](lmdb/src/main/java/io/github/dfa1/lmdb/LmdbComparator.java)
+through a `Linker.upcallStub` trampoline (see
+[#1](https://github.com/dfa1/lmdb-ffm/issues/1)) rather than the plain
+`downcallHandle` the rest of this table uses.
+
+Not yet bound (22):
 
 | Function | Category | Purpose |
 |---|---|---|
@@ -122,8 +128,6 @@ Not yet bound (24):
 | `mdb_env_incr_dumpfd` | Straightforward | Same, to an open file descriptor |
 | `mdb_env_incr_loadfd` | Straightforward | Load an incremental dump back in |
 | `mdb_env_rollback` | Straightforward | Roll the environment back to a historical `txnid` (pairs with incremental dump for recovery) |
-| `mdb_set_compare` | Blocked (upcall) | Custom key-comparison function — see [#1](https://github.com/dfa1/lmdb-ffm/issues/1) |
-| `mdb_set_dupsort` | Blocked (upcall) | Custom comparator for values within one key in a `DUPSORT` db — sibling of `mdb_set_compare` |
 | `mdb_set_relctx` | Blocked (upcall) | Opaque context pointer for a relocation callback (`MDB_FIXEDMAP` only — a legacy, rarely-used mode) |
 | `mdb_set_relfunc` | Blocked (upcall) | The relocation callback itself, for the same legacy `MDB_FIXEDMAP` mode |
 | `mdb_reader_list` | Blocked (upcall) | Dumps the reader lock table — takes an `MDB_msg_func` callback, called once per line |

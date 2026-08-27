@@ -745,6 +745,124 @@ class LmdbTxnTest {
         }
     }
 
+    @Nested
+    class CustomComparator {
+
+        @Test
+        void setComparatorChangesKeyIterationOrder() {
+            // Given a database opened with a reverse-order key comparator
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.setComparator(dbi, reverseByteComparator());
+                txn.put(dbi, key("a"), value("1"), Set.of());
+                txn.put(dbi, key("b"), value("2"), Set.of());
+                txn.put(dbi, key("c"), value("3"), Set.of());
+                txn.commit();
+            }
+
+            // When iterating from the first entry
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                LmdbCursor.Entry first = cursor.get(LmdbCursorOp.FIRST);
+                LmdbCursor.Entry second = cursor.get(LmdbCursorOp.NEXT);
+                LmdbCursor.Entry third = cursor.get(LmdbCursorOp.NEXT);
+
+                // Then keys come back high-to-low instead of LMDB's default low-to-high
+                assertThat(decode(first.key())).isEqualTo("c");
+                assertThat(decode(second.key())).isEqualTo("b");
+                assertThat(decode(third.key())).isEqualTo("a");
+            }
+        }
+
+        @Test
+        void setDupComparatorChangesDuplicateValueOrder() {
+            // Given a DUPSORT database opened with a reverse-order value comparator
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.setDupComparator(dbi, reverseByteComparator());
+                txn.put(dbi, key("k"), value("1"), Set.of());
+                txn.put(dbi, key("k"), value("2"), Set.of());
+                txn.put(dbi, key("k"), value("3"), Set.of());
+                txn.commit();
+            }
+
+            // When iterating the duplicates under that key
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                LmdbCursor.Entry first = cursor.get(LmdbCursorOp.FIRST);
+                LmdbCursor.Entry second = cursor.get(LmdbCursorOp.NEXT);
+                LmdbCursor.Entry third = cursor.get(LmdbCursorOp.NEXT);
+
+                // Then values come back high-to-low instead of LMDB's default low-to-high
+                assertThat(decode(first.data())).isEqualTo("3");
+                assertThat(decode(second.data())).isEqualTo("2");
+                assertThat(decode(third.data())).isEqualTo("1");
+            }
+        }
+
+        @Test
+        void setComparatorRejectsANullDbi() {
+            // Given a transaction
+            LmdbTxn sut = env.beginTxn();
+
+            // When installing a comparator on a null dbi
+            ThrowingCallable result = () -> sut.setComparator(null, reverseByteComparator());
+
+            // Then it fails fast
+            assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+        }
+
+        @Test
+        void setComparatorRejectsANullComparator() {
+            // Given an open database
+            LmdbTxn sut = env.beginTxn();
+            LmdbDbi dbi = sut.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+
+            // When installing a null comparator
+            ThrowingCallable result = () -> sut.setComparator(dbi, null);
+
+            // Then it fails fast
+            assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+        }
+
+        @Test
+        void setDupComparatorRejectsANullComparator() {
+            // Given an open DUPSORT database
+            LmdbTxn sut = env.beginTxn();
+            LmdbDbi dbi = sut.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+
+            // When installing a null dup comparator
+            ThrowingCallable result = () -> sut.setDupComparator(dbi, null);
+
+            // Then it fails fast
+            assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+        }
+
+        @Test
+        void aComparatorThatThrowsDoesNotCrashTheJvm() {
+            // Given a database opened with a comparator that always throws
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.setComparator(dbi, (a, b) -> {
+                    throw new RuntimeException("boom");
+                });
+
+                // When keys are written, forcing key comparisons in the B+tree
+                ThrowingCallable result = () -> {
+                    txn.put(dbi, key("a"), value("1"), Set.of());
+                    txn.put(dbi, key("b"), value("2"), Set.of());
+                };
+
+                // Then the exception is contained (an upcall cannot propagate a Java
+                // exception into LMDB's C code) rather than crashing the process
+                assertThatCode(result).doesNotThrowAnyException();
+            }
+        }
+    }
+
     private static byte[] key(String s) {
         return s.getBytes(StandardCharsets.UTF_8);
     }
@@ -767,5 +885,18 @@ class LmdbTxnTest {
 
     private static String decode(MemorySegment value) {
         return new String(value.toArray(JAVA_BYTE), StandardCharsets.UTF_8);
+    }
+
+    private static LmdbComparator reverseByteComparator() {
+        return (a, b) -> {
+            int len = Math.min((int) a.byteSize(), (int) b.byteSize());
+            for (int i = 0; i < len; i++) {
+                int cmp = Byte.compareUnsigned(a.get(JAVA_BYTE, i), b.get(JAVA_BYTE, i));
+                if (cmp != 0) {
+                    return -cmp;
+                }
+            }
+            return -Long.compare(a.byteSize(), b.byteSize());
+        };
     }
 }
