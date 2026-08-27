@@ -107,26 +107,41 @@ for the build.
 | Cursors | `mdb_cursor_open`, `mdb_cursor_close`, `mdb_cursor_get`, `mdb_cursor_put`, `mdb_cursor_del`, `mdb_cursor_count`, `mdb_cursor_renew` |
 | Misc | `mdb_version`, `mdb_strerror` |
 
-Not yet bound (24), in three very different categories:
+Not yet bound (24):
 
-**Plain data in/out — straightforward to add, just not needed yet:**
-`mdb_cursor_is_db`, `mdb_reader_check`, `mdb_reader_list`,
-`mdb_env_copy`, `mdb_env_copyfd`, `mdb_env_copyfd2`, `mdb_env_incr_dump`,
-`mdb_env_incr_dumpfd`, `mdb_env_incr_loadfd`, `mdb_env_rollback`, `mdb_cmp`,
-`mdb_dcmp`.
+| Function | Category | Purpose |
+|---|---|---|
+| `mdb_cmp` | Straightforward | Compare two keys using `dbi`'s active key-comparison function (default or custom) |
+| `mdb_dcmp` | Straightforward | Same, for the *data* comparison in a `DUPSORT` database |
+| `mdb_cursor_is_db` | Straightforward | Whether the cursor's current position is itself a named sub-database record |
+| `mdb_reader_check` | Straightforward | Clear stale reader-lock-table slots (e.g. from a crashed process); returns a count |
+| `mdb_env_copy` | Straightforward | Superseded — `copyTo`/`mdb_env_copy2` (bound) already covers this plus flags |
+| `mdb_env_copyfd` | Straightforward | Backup to an open file descriptor instead of a path (e.g. a pipe/socket) |
+| `mdb_env_copyfd2` | Straightforward | Same, with `MDB_CP_COMPACT` support |
+| `mdb_env_incr_dump` | Straightforward | Incremental (delta-since-`txnid`) backup to a path |
+| `mdb_env_incr_dumpfd` | Straightforward | Same, to an open file descriptor |
+| `mdb_env_incr_loadfd` | Straightforward | Load an incremental dump back in |
+| `mdb_env_rollback` | Straightforward | Roll the environment back to a historical `txnid` (pairs with incremental dump for recovery) |
+| `mdb_set_compare` | Blocked (upcall) | Custom key-comparison function — see [#1](https://github.com/dfa1/lmdb-ffm/issues/1) |
+| `mdb_set_dupsort` | Blocked (upcall) | Custom comparator for values within one key in a `DUPSORT` db — sibling of `mdb_set_compare` |
+| `mdb_set_relctx` | Blocked (upcall) | Opaque context pointer for a relocation callback (`MDB_FIXEDMAP` only — a legacy, rarely-used mode) |
+| `mdb_set_relfunc` | Blocked (upcall) | The relocation callback itself, for the same legacy `MDB_FIXEDMAP` mode |
+| `mdb_reader_list` | Blocked (upcall) | Dumps the reader lock table — takes an `MDB_msg_func` callback, called once per line |
+| `mdb_env_set_assert` | Blocked (upcall) | Custom assertion-failure handler/logger |
+| `mdb_env_set_checksum` | Blocked (upcall) | Pluggable page-checksum hook (LMDB 1.x addition) |
+| `mdb_env_set_encrypt` | Blocked (upcall) | Pluggable page-encryption hook (LMDB 1.x addition) |
+| `mdb_modload` | Blocked (upcall) | Dynamically load a shared-library plugin supplying checksum/encryption functions |
+| `mdb_modsetup` | Blocked (upcall) | Wire a loaded module's crypto hooks into an environment |
+| `mdb_modunload` | Blocked (upcall) | Unload a previously-loaded module |
+| `mdb_env_set_userctx` | Skippable | Opaque app-data pointer — a caller would just keep a field on their own wrapper |
+| `mdb_env_get_userctx` | Skippable | Getter counterpart to the above |
 
-**Blocked on native callbacks** — these take a C function pointer (a custom
-comparator, a relocation/checksum/encryption hook, or a plugin loader
-supplying one), which this binding would have to supply via
-`Linker.upcallStub` (a native-callable trampoline into a Java `MethodHandle`)
-— a real, separate chunk of work, not implemented:
-`mdb_set_compare`, `mdb_set_dupsort`, `mdb_set_relctx`, `mdb_set_relfunc`,
-`mdb_env_set_assert`, `mdb_env_set_checksum`, `mdb_env_set_encrypt`,
-`mdb_modload`, `mdb_modsetup`, `mdb_modunload`.
-
-**Opaque user-context pointer** — trivial to bind, but pointless in a Java
-API (a caller would just keep a reference on their own wrapper object
-instead): `mdb_env_set_userctx`, `mdb_env_get_userctx`.
+"Blocked (upcall)" means the C function takes a function pointer LMDB calls
+back into — a custom comparator, a relocation/checksum/encryption hook, or a
+message callback. Binding one means building a `Linker.upcallStub` (a
+native-callable trampoline into a Java `MethodHandle`) — a real, separate
+chunk of work, not just another `downcallHandle` like the rest of this
+project's bindings.
 
 ## Build from source
 
