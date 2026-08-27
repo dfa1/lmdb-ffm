@@ -76,12 +76,32 @@ final class Bindings {
     // int mdb_env_set_maxreaders(MDB_env *env, unsigned int readers)
     static final MethodHandle ENV_SET_MAXREADERS =
             NativeLibrary.lookup("mdb_env_set_maxreaders", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
+    // int mdb_env_get_maxreaders(MDB_env *env, unsigned int *readers)
+    static final MethodHandle ENV_GET_MAXREADERS =
+            NativeLibrary.lookup("mdb_env_get_maxreaders", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    // int mdb_env_set_pagesize(MDB_env *env, int size)
+    static final MethodHandle ENV_SET_PAGESIZE =
+            NativeLibrary.lookup("mdb_env_set_pagesize", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
     // int mdb_env_get_maxkeysize(MDB_env *env)
     static final MethodHandle ENV_GET_MAXKEYSIZE =
             NativeLibrary.lookup("mdb_env_get_maxkeysize", FunctionDescriptor.of(JAVA_INT, ADDRESS));
     // int mdb_env_sync(MDB_env *env, int force)
     static final MethodHandle ENV_SYNC =
             NativeLibrary.lookup("mdb_env_sync", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT));
+    // int mdb_env_set_flags(MDB_env *env, unsigned int flags, int onoff)
+    static final MethodHandle ENV_SET_FLAGS =
+            NativeLibrary.lookup("mdb_env_set_flags", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT));
+    // int mdb_env_get_flags(MDB_env *env, unsigned int *flags)
+    static final MethodHandle ENV_GET_FLAGS =
+            NativeLibrary.lookup("mdb_env_get_flags", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    // int mdb_env_get_path(MDB_env *env, const char **path)
+    static final MethodHandle ENV_GET_PATH =
+            NativeLibrary.lookup("mdb_env_get_path", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    // int mdb_env_get_fd(MDB_env *env, mdb_filehandle_t *fd) — mdb_filehandle_t
+    // is `int` on POSIX, `void*` (HANDLE) on Windows; LmdbEnv#fd() picks the
+    // right read width for the out-param at the call site.
+    static final MethodHandle ENV_GET_FD =
+            NativeLibrary.lookup("mdb_env_get_fd", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
     // int mdb_env_stat(MDB_env *env, MDB_stat *stat)
     static final MethodHandle ENV_STAT =
             NativeLibrary.lookup("mdb_env_stat", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
@@ -113,6 +133,9 @@ final class Bindings {
     // int mdb_txn_renew(MDB_txn *txn)
     static final MethodHandle TXN_RENEW =
             NativeLibrary.lookup("mdb_txn_renew", FunctionDescriptor.of(JAVA_INT, ADDRESS));
+    // int mdb_txn_flags(MDB_txn *txn, unsigned int *flags)
+    static final MethodHandle TXN_FLAGS =
+            NativeLibrary.lookup("mdb_txn_flags", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
 
     // --- databases ---
 
@@ -123,6 +146,9 @@ final class Bindings {
     // void mdb_dbi_close(MDB_env *env, MDB_dbi dbi)
     static final MethodHandle DBI_CLOSE =
             NativeLibrary.lookup("mdb_dbi_close", FunctionDescriptor.ofVoid(ADDRESS, JAVA_INT));
+    // int mdb_dbi_flags(MDB_txn *txn, MDB_dbi dbi, unsigned int *flags)
+    static final MethodHandle DBI_FLAGS =
+            NativeLibrary.lookup("mdb_dbi_flags", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS));
     // int mdb_drop(MDB_txn *txn, MDB_dbi dbi, int del)
     static final MethodHandle DROP =
             NativeLibrary.lookup("mdb_drop", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT));

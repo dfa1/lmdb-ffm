@@ -237,6 +237,44 @@ class LmdbTxnTest {
     }
 
     @Nested
+    class FlagsIntrospection {
+
+        @Test
+        void flagsReportsRdonlyForAReadOnlyTransaction() {
+            // When a read-only transaction is begun
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                // Then it reports RDONLY among its flags
+                assertThat(txn.flags()).contains(LmdbEnvFlag.RDONLY);
+            }
+        }
+
+        @Test
+        void flagsDoesNotReportRdonlyForAWriteTransaction() {
+            // When a read-write transaction is begun
+            try (LmdbTxn txn = env.beginTxn()) {
+                // Then it does not report RDONLY
+                assertThat(txn.flags()).doesNotContain(LmdbEnvFlag.RDONLY);
+            }
+        }
+
+        @Test
+        void dbiFlagsReportsHowTheDatabaseWasOpened() {
+            // Given a database opened with DUPSORT
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.commit();
+            }
+
+            // When its flags are inspected
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                // Then DUPSORT is reported, but CREATE (an open-time-only directive) is not
+                assertThat(txn.dbiFlags(dbi)).contains(LmdbDbiFlag.DUPSORT);
+            }
+        }
+    }
+
+    @Nested
     class ZeroCopy {
 
         @Test

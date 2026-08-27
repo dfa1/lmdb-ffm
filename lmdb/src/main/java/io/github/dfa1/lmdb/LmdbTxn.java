@@ -237,6 +237,48 @@ public final class LmdbTxn extends NativeObject {
         }
     }
 
+    /// The flags `dbi` was opened with (e.g. [LmdbDbiFlag#DUPSORT]) — the
+    /// persisted structural flags, not [LmdbDbiFlag#CREATE], which is only a
+    /// directive to [#openDatabase(String, Set)], never a stored property.
+    ///
+    /// @param dbi the database to inspect
+    /// @return the database's flags
+    /// @throws LmdbException if the native call fails
+    public Set<LmdbDbiFlag> dbiFlags(LmdbDbi dbi) {
+        Objects.requireNonNull(dbi, "dbi");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(JAVA_INT);
+            int code;
+            try {
+                code = (int) Bindings.DBI_FLAGS.invokeExact(ptr(), dbi.handle(), out);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+            return LmdbFlag.fromBits(out.get(JAVA_INT, 0L), LmdbDbiFlag.class);
+        }
+    }
+
+    /// The flags this transaction is running with (e.g. [LmdbEnvFlag#RDONLY]),
+    /// as passed to [LmdbEnv#beginTxn(Set)] plus any inherited from
+    /// [LmdbEnv#open(Path, Set)].
+    ///
+    /// @return this transaction's flags
+    /// @throws LmdbException if the native call fails
+    public Set<LmdbEnvFlag> flags() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(JAVA_INT);
+            int code;
+            try {
+                code = (int) Bindings.TXN_FLAGS.invokeExact(ptr(), out);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+            return LmdbFlag.fromBits(out.get(JAVA_INT, 0L), LmdbEnvFlag.class);
+        }
+    }
+
     /// Zero-copy read: looks up `key` in `dbi` and returns the stored data as a
     /// [MemorySegment] pointing directly into the memory-mapped database — no
     /// copy. The segment is valid only until this transaction ends or the

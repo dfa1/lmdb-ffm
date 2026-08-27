@@ -95,7 +95,7 @@ final class NativeLibrary {
         return "so";
     }
 
-    private static String classifier() {
+    static String classifier() {
         return classifier(System.getProperty("os.name", ""), System.getProperty("os.arch", ""));
     }
 

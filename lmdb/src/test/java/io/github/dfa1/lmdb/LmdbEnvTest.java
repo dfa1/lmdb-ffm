@@ -104,6 +104,76 @@ class LmdbEnvTest {
                 assertThat(sut.info().maxReaders()).isEqualTo(42);
             }
         }
+
+        @Test
+        void maxReadersGetterMatchesTheConfiguredCount(@TempDir Path dir) {
+            // Given an environment configured with an explicit reader slot count
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).maxReaders(42).open(dir, Set.of())) {
+                // Then the direct getter reports the same count as info()
+                assertThat(sut.maxReaders()).isEqualTo(42);
+            }
+        }
+
+        @Test
+        void pageSizeIsHonoredByTheOpenedEnvironment(@TempDir Path dir) {
+            // Given an environment configured with an explicit page size
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).pageSize(4096).open(dir, Set.of())) {
+                // Then it reports that same page size
+                assertThat(sut.stat().pageSize()).isEqualTo(4096);
+            }
+        }
+
+        @Test
+        void pathReturnsWhatItWasOpenedWith(@TempDir Path dir) {
+            // Given an environment opened at a specific path
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                // Then it reports that same path back
+                assertThat(sut.path()).isEqualTo(dir);
+            }
+        }
+
+        @Test
+        void fdReportsANonNegativeDescriptor(@TempDir Path dir) {
+            // Given an open environment
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                // Then it reports a plausible native file descriptor/handle
+                assertThat(sut.fd()).isGreaterThanOrEqualTo(0L);
+            }
+        }
+    }
+
+    @Nested
+    class Flags {
+
+        @Test
+        void flagsReportsWhatItWasOpenedWith(@TempDir Path dir) {
+            // Given an environment opened with NOSUBDIR
+            Path file = dir.resolve("single.mdb");
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(file, EnumSet.of(LmdbEnvFlag.NOSUBDIR))) {
+                // Then flags() reports it
+                assertThat(sut.flags()).contains(LmdbEnvFlag.NOSUBDIR);
+            }
+        }
+
+        @Test
+        void setFlagsAddsAndClearsAFlagAtRuntime(@TempDir Path dir) {
+            // Given an environment opened without NOSYNC
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                assertThat(sut.flags()).doesNotContain(LmdbEnvFlag.NOSYNC);
+
+                // When NOSYNC is set at runtime
+                sut.setFlags(EnumSet.of(LmdbEnvFlag.NOSYNC), true);
+
+                // Then it is reflected
+                assertThat(sut.flags()).contains(LmdbEnvFlag.NOSYNC);
+
+                // When cleared again
+                sut.setFlags(EnumSet.of(LmdbEnvFlag.NOSYNC), false);
+
+                // Then it is gone
+                assertThat(sut.flags()).doesNotContain(LmdbEnvFlag.NOSYNC);
+            }
+        }
     }
 
     @Nested

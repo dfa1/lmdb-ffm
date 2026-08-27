@@ -2,11 +2,14 @@ package io.github.dfa1.lmdb;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Set;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
+import static java.lang.foreign.ValueLayout.JAVA_INT;
+import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 /// A database environment — wraps `MDB_env*`. An environment supports
 /// multiple databases, all residing in the same shared memory map at one
@@ -108,6 +111,45 @@ public final class LmdbEnv extends NativeObject {
         return this;
     }
 
+    /// The maximum number of concurrent reader slots configured via
+    /// [#maxReaders(int)] (or LMDB's default of 126). Equivalent to
+    /// [LmdbEnvInfo#maxReaders()] (from [#info()]), via a direct call instead
+    /// of reading the whole `MDB_envinfo` struct.
+    ///
+    /// @return the maximum number of concurrent reader slots
+    /// @throws LmdbException if the native call fails
+    public int maxReaders() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(JAVA_INT);
+            int code;
+            try {
+                code = (int) Bindings.ENV_GET_MAXREADERS.invokeExact(ptr(), out);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+            return out.get(JAVA_INT, 0L);
+        }
+    }
+
+    /// Sets the size of database pages, in bytes. Must be called before
+    /// [#open(Path, Set, int)]; defaults to the OS page size. Rarely needed
+    /// outside filesystems (e.g. ZFS) that don't share the OS's own page size.
+    ///
+    /// @param bytes the page size, in bytes
+    /// @return `this`, for chaining
+    /// @throws LmdbException if the native call fails
+    public LmdbEnv pageSize(int bytes) {
+        int code;
+        try {
+            code = (int) Bindings.ENV_SET_PAGESIZE.invokeExact(ptr(), bytes);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
+        return this;
+    }
+
     /// Opens the environment at `path`, creating it with permissions
     /// `rw-r--r--` if it does not already exist.
     ///
@@ -174,6 +216,93 @@ public final class LmdbEnv extends NativeObject {
             throw NativeCall.rethrow(t);
         }
         NativeCall.check(code);
+    }
+
+    /// Sets or clears `flags` on this already-open environment, in addition
+    /// to (or overriding) whatever was passed to [#open(Path, Set)]. Only
+    /// flags meaningful to change at runtime should be used here (e.g.
+    /// [LmdbEnvFlag#NOSYNC]/[LmdbEnvFlag#MAPASYNC]/[LmdbEnvFlag#NOMEMINIT]);
+    /// LMDB does not itself validate that a given flag makes sense to flip
+    /// post-open. Undefined if multiple threads change flags at once.
+    ///
+    /// @param flags the flags to set or clear, e.g. `EnumSet.of(LmdbEnvFlag.NOSYNC)`
+    /// @param on    `true` to set them, `false` to clear them
+    /// @throws LmdbException if the native call fails
+    public void setFlags(Set<LmdbEnvFlag> flags, boolean on) {
+        Objects.requireNonNull(flags, "flags");
+        int bits = LmdbFlag.toBits(flags);
+        int code;
+        try {
+            code = (int) Bindings.ENV_SET_FLAGS.invokeExact(ptr(), bits, on ? 1 : 0);
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        NativeCall.check(code);
+    }
+
+    /// The flags currently active on this environment — those passed to
+    /// [#open(Path, Set)] plus any later change via [#setFlags(Set, boolean)].
+    ///
+    /// @return the active flags
+    /// @throws LmdbException if the native call fails
+    public Set<LmdbEnvFlag> flags() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(JAVA_INT);
+            int code;
+            try {
+                code = (int) Bindings.ENV_GET_FLAGS.invokeExact(ptr(), out);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+            return LmdbFlag.fromBits(out.get(JAVA_INT, 0L), LmdbEnvFlag.class);
+        }
+    }
+
+    /// The filesystem path this environment was [#open(Path, Set)]ed with.
+    ///
+    /// @return the environment's path
+    /// @throws LmdbException if the native call fails
+    @SuppressWarnings("restricted") // reinterpret needed to read a C string of unknown length
+    public Path path() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(ADDRESS);
+            int code;
+            try {
+                code = (int) Bindings.ENV_GET_PATH.invokeExact(ptr(), out);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+            MemorySegment pathPtr = out.get(ADDRESS, 0L);
+            return Path.of(pathPtr.reinterpret(Long.MAX_VALUE).getString(0, StandardCharsets.UTF_8));
+        }
+    }
+
+    /// This environment's underlying file descriptor (POSIX) or file handle
+    /// (Windows), widened to a `long` either way. Meant for POSIX use cases
+    /// like closing the descriptor across `fork()`+`exec()`; LMDB's own doc
+    /// notes this may be called after `fork()` for exactly that reason.
+    ///
+    /// @return the native file descriptor or handle, as a raw numeric value
+    /// @throws LmdbException if the native call fails
+    public long fd() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment out = arena.allocate(JAVA_LONG);
+            int code;
+            try {
+                code = (int) Bindings.ENV_GET_FD.invokeExact(ptr(), out);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+            // mdb_filehandle_t is `int` on POSIX, `void*` (HANDLE) on Windows —
+            // only as many bytes as the platform's own type actually are were
+            // written into `out`, so the read width must match.
+            return NativeLibrary.classifier().startsWith("windows")
+                    ? out.get(JAVA_LONG, 0L)
+                    : out.get(JAVA_INT, 0L);
+        }
     }
 
     /// Statistics for the environment's unnamed database.
