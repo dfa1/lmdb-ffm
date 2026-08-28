@@ -169,23 +169,24 @@ Not yet bound (18):
 | `mdb_txn_env` | Skippable | A transaction's owning environment — already covered by `LmdbTxn#env()`, tracked in Java without a native round-trip |
 | `mdb_cursor_dbi` | Skippable | The `dbi` a cursor was opened on — tracked in Java by `LmdbCursor#dbi()`, same reasoning as `mdb_txn_env` |
 | `mdb_cursor_txn` | Skippable | The transaction a cursor currently operates within — tracked in Java by `LmdbCursor#txn()`, updated on `renew` |
-| `mdb_set_relctx` | Blocked (upcall) | Opaque context pointer for a relocation callback (`MDB_FIXEDMAP` only — a legacy, rarely-used mode) |
-| `mdb_set_relfunc` | Blocked (upcall) | The relocation callback itself, for the same legacy `MDB_FIXEDMAP` mode |
+| `mdb_set_relctx` | Dead upstream | Context pointer for a `MDB_FIXEDMAP` relocation callback — `lmdb.h`'s own doc on `mdb_set_relfunc` says outright "currently the relocation feature is unimplemented and setting this function has no effect," so there is nothing this binding could ever do |
+| `mdb_set_relfunc` | Dead upstream | The relocation callback itself — same "unimplemented, no effect" admission from `lmdb.h`, not a gap in this project |
 | `mdb_env_set_assert` | Dead on this build | Custom assertion-failure handler/logger — inert here: this project's native builds pass `-DNDEBUG` (see `scripts/build-lmdb.sh`), which compiles out `mdb_env_set_assert`'s store of the callback pointer entirely (`mdb.c`'s own `#ifndef NDEBUG` guard around it), so the callback could never fire. It also always ends in `abort()` even on a debug build, so there'd be no safe way to exercise it in this project's tests either way. |
-| `mdb_env_set_checksum` | Blocked (upcall) | Pluggable page-checksum hook (LMDB 1.x addition) |
-| `mdb_env_set_encrypt` | Blocked (upcall) | Pluggable page-encryption hook (LMDB 1.x addition) |
-| `mdb_modload` | Blocked (upcall) | Dynamically load a shared-library plugin supplying checksum/encryption functions |
-| `mdb_modsetup` | Blocked (upcall) | Wire a loaded module's crypto hooks into an environment |
-| `mdb_modunload` | Blocked (upcall) | Unload a previously-loaded module |
+| `mdb_modload` | Refused on principle | Dynamically loads a shared library from a caller-supplied path (`dlopen`-style) and returns crypto function pointers from it — exactly the risk `NativeLibrary`'s own doc refuses: "loading a caller-supplied native library is arbitrary native code execution in the JVM process." Not a missing feature; deliberately never adding it. |
+| `mdb_modsetup` | Refused on principle | Only useful with a module handle from `mdb_modload` — moot without it |
+| `mdb_modunload` | Refused on principle | Same — only unloads what `mdb_modload` would have loaded |
+| `mdb_env_set_checksum` | Deferred | Pluggable page-checksum hook — unlike `mdb_modload`, this takes a caller-*implemented* function (no `dlopen`), so it's not blocked on principle, but `me_sumfunc` fires on every page read/write in `mdb.c`, not once at open — real hot-path perf work (benchmark-backed, per this project's own bar for `GET`/`CURSOR_GET`) before it can be added responsibly |
+| `mdb_env_set_encrypt` | Deferred | Pluggable page-encryption hook — same hot-path concern as `mdb_env_set_checksum`, plus higher stakes: a buggy checksum just reports `MDB_BAD_CHECKSUM`, but a buggy encrypt function silently corrupts page content on disk |
 | `mdb_env_set_userctx` | Skippable | Opaque app-data pointer — a caller would just keep a field on their own wrapper |
 | `mdb_env_get_userctx` | Skippable | Getter counterpart to the above |
 
-"Blocked (upcall)" means the C function takes a function pointer LMDB calls
-back into — a custom comparator, a relocation/checksum/encryption hook, or a
-message callback. Binding one means building a `Linker.upcallStub` (a
-native-callable trampoline into a Java `MethodHandle`) — a real, separate
-chunk of work, not just another `downcallHandle` like the rest of this
-project's bindings.
+"Dead upstream" means LMDB's own header documents the function as inert —
+not a gap here, nothing to add. "Refused on principle" means the function
+works but does something (`dlopen` of a caller-supplied path) this project's
+native-loading policy explicitly rejects (see `NativeLibrary`'s own doc).
+"Deferred" means the function is real, useful, and not blocked by anything
+structural — just not yet justified by the benchmarking this project holds
+every hot-path binding to.
 
 ## Build from source
 
