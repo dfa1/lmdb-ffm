@@ -25,7 +25,7 @@ class LmdbCursorTest {
 
     @BeforeEach
     void openEnvironment(@TempDir Path dir) {
-        env = LmdbEnv.create().mapSize(10L << 20).maxDatabases(4).open(dir, Set.of());
+        env = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).maxDatabases(4).open(dir, Set.of());
     }
 
     @AfterEach

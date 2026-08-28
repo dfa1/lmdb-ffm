@@ -38,7 +38,7 @@ class LmdbStatTest {
                 LmdbStat sut = LmdbStat.of(stat);
 
                 // Then every accessor reflects the struct's own field
-                assertThat(sut.pageSize()).isEqualTo(4096);
+                assertThat(sut.pageSize()).isEqualTo(LmdbByteSize.ofBytes(4096));
                 assertThat(sut.depth()).isEqualTo(2);
                 assertThat(sut.branchPages()).isEqualTo(10);
                 assertThat(sut.leafPages()).isEqualTo(20);
@@ -97,8 +97,8 @@ class LmdbStatTest {
                 LmdbStat sut = LmdbStat.of(statSegment(arena, 4096, 2, 10, 20, 3, 42));
 
                 // Then its string form names and shows every field
-                assertThat(sut).hasToString(
-                        "LmdbStat[pageSize=4096, depth=2, branchPages=10, leafPages=20, overflowPages=3, entries=42]");
+                assertThat(sut).hasToString("LmdbStat[pageSize=LmdbByteSize[bytes=4096], depth=2, branchPages=10, "
+                        + "leafPages=20, overflowPages=3, entries=42]");
             }
         }
     }

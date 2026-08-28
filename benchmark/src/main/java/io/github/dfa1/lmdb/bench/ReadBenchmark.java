@@ -1,5 +1,6 @@
 package io.github.dfa1.lmdb.bench;
 
+import io.github.dfa1.lmdb.LmdbByteSize;
 import io.github.dfa1.lmdb.LmdbCursor;
 import io.github.dfa1.lmdb.LmdbCursorOp;
 import io.github.dfa1.lmdb.LmdbDbi;
@@ -127,7 +128,7 @@ public class ReadBenchmark {
         }
 
         lmdbJavaDir = BenchSupport.tempDir("lmdb-ffm-read");
-        env = LmdbEnv.create().mapSize(mapSize).maxDatabases(1)
+        env = LmdbEnv.create().mapSize(LmdbByteSize.ofBytes(mapSize)).maxDatabases(1)
                 .open(lmdbJavaDir, EnumSet.of(LmdbEnvFlag.WRITEMAP, LmdbEnvFlag.NOSYNC));
         try (LmdbTxn txn = env.beginTxn()) {
             dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));

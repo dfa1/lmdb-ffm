@@ -33,7 +33,7 @@ import java.util.Set;
 import static java.nio.charset.StandardCharsets.UTF_8;
 
 try (LmdbEnv env = LmdbEnv.create()
-        .mapSize(10L << 20)
+        .mapSize(LmdbByteSize.ofMB(10))
         .open(Path.of("/tmp/mydb"), EnumSet.of(LmdbEnvFlag.NOSUBDIR))) {
 
     LmdbDbi dbi;

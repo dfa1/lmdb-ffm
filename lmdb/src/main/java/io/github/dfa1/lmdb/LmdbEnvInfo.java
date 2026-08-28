@@ -28,14 +28,14 @@ public final class LmdbEnvInfo {
             Bindings.ENVINFO_LAYOUT.varHandle(MemoryLayout.PathElement.groupElement("me_numreaders"));
 
     private final MemorySegment mapAddress;
-    private final long mapSize;
+    private final LmdbByteSize mapSize;
     private final long lastPageNo;
     private final long lastTxnId;
     private final int maxReaders;
     private final int numReaders;
 
-    private LmdbEnvInfo(
-            MemorySegment mapAddress, long mapSize, long lastPageNo, long lastTxnId, int maxReaders, int numReaders) {
+    private LmdbEnvInfo(MemorySegment mapAddress, LmdbByteSize mapSize, long lastPageNo, long lastTxnId,
+            int maxReaders, int numReaders) {
         this.mapAddress = mapAddress;
         this.mapSize = mapSize;
         this.lastPageNo = lastPageNo;
@@ -47,7 +47,7 @@ public final class LmdbEnvInfo {
     static LmdbEnvInfo of(MemorySegment info) {
         return new LmdbEnvInfo(
                 (MemorySegment) MAPADDR.get(info, 0L),
-                (long) MAPSIZE.get(info, 0L),
+                LmdbByteSize.ofBytes((long) MAPSIZE.get(info, 0L)),
                 (long) LAST_PGNO.get(info, 0L),
                 (long) LAST_TXNID.get(info, 0L),
                 (int) MAXREADERS.get(info, 0L),
@@ -61,10 +61,10 @@ public final class LmdbEnvInfo {
         return mapAddress;
     }
 
-    /// The size of the data memory map, in bytes.
+    /// The size of the data memory map.
     ///
-    /// @return the map size, in bytes
-    public long mapSize() {
+    /// @return the map size
+    public LmdbByteSize mapSize() {
         return mapSize;
     }
 
@@ -101,7 +101,7 @@ public final class LmdbEnvInfo {
         if (!(o instanceof LmdbEnvInfo other)) {
             return false;
         }
-        return mapSize == other.mapSize
+        return mapSize.equals(other.mapSize)
                 && lastPageNo == other.lastPageNo
                 && lastTxnId == other.lastTxnId
                 && maxReaders == other.maxReaders

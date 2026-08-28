@@ -25,7 +25,7 @@ class LmdbEnvTest {
         void opensAndClosesAnEnvironment(@TempDir Path dir) {
             // Given a fresh directory
             // When an environment is created and opened in it
-            LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of());
+            LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of());
 
             // Then it closes cleanly and can be closed again (idempotent)
             sut.close();
@@ -38,7 +38,7 @@ class LmdbEnvTest {
             Path file = dir.resolve("single.mdb");
 
             // When opened with NOSUBDIR
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(file, EnumSet.of(LmdbEnvFlag.NOSUBDIR))) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(file, EnumSet.of(LmdbEnvFlag.NOSUBDIR))) {
                 // Then it succeeds and creates exactly that file
                 assertThat(sut).isNotNull();
                 assertThat(file).exists();
@@ -48,7 +48,7 @@ class LmdbEnvTest {
         @Test
         void beginningATransactionAfterCloseFails(@TempDir Path dir) {
             // Given a closed environment
-            LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of());
+            LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of());
             sut.close();
 
             // When a transaction is begun on it
@@ -65,29 +65,29 @@ class LmdbEnvTest {
         @Test
         void reportsAPositiveMaxKeySize(@TempDir Path dir) {
             // Given an open environment
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 // Then it reports LMDB's (page-size-dependent) key size limit
-                assertThat(sut.maxKeySize()).isPositive();
+                assertThat(sut.maxKeySize().bytes()).isPositive();
             }
         }
 
         @Test
         void statReportsAnEmptyFreshEnvironment(@TempDir Path dir) {
             // Given a freshly opened, empty environment
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 // When its statistics are read
                 LmdbStat stat = sut.stat();
 
                 // Then the unnamed database is empty, with a positive page size
                 assertThat(stat.entries()).isZero();
-                assertThat(stat.pageSize()).isPositive();
+                assertThat(stat.pageSize().bytes()).isPositive();
             }
         }
 
         @Test
         void infoReportsTheConfiguredMapSize(@TempDir Path dir) {
             // Given an environment opened with a specific map size
-            long mapSize = 10L << 20;
+            LmdbByteSize mapSize = LmdbByteSize.ofMB(10);
             try (LmdbEnv sut = LmdbEnv.create().mapSize(mapSize).open(dir, Set.of())) {
                 // When its info is read
                 LmdbEnvInfo info = sut.info();
@@ -102,7 +102,7 @@ class LmdbEnvTest {
         @Test
         void infoReportsTheConfiguredMaxReaders(@TempDir Path dir) {
             // Given an environment configured with an explicit reader slot count
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).maxReaders(42).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).maxReaders(42).open(dir, Set.of())) {
                 // Then info reflects that same count
                 assertThat(sut.info().maxReaders()).isEqualTo(42);
             }
@@ -111,7 +111,7 @@ class LmdbEnvTest {
         @Test
         void maxReadersGetterMatchesTheConfiguredCount(@TempDir Path dir) {
             // Given an environment configured with an explicit reader slot count
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).maxReaders(42).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).maxReaders(42).open(dir, Set.of())) {
                 // Then the direct getter reports the same count as info()
                 assertThat(sut.maxReaders()).isEqualTo(42);
             }
@@ -120,16 +120,17 @@ class LmdbEnvTest {
         @Test
         void pageSizeIsHonoredByTheOpenedEnvironment(@TempDir Path dir) {
             // Given an environment configured with an explicit page size
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).pageSize(4096).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).pageSize(LmdbByteSize.ofBytes(4096))
+                    .open(dir, Set.of())) {
                 // Then it reports that same page size
-                assertThat(sut.stat().pageSize()).isEqualTo(4096);
+                assertThat(sut.stat().pageSize()).isEqualTo(LmdbByteSize.ofBytes(4096));
             }
         }
 
         @Test
         void pathReturnsWhatItWasOpenedWith(@TempDir Path dir) {
             // Given an environment opened at a specific path
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 // Then it reports that same path back
                 assertThat(sut.path()).isEqualTo(dir);
             }
@@ -138,7 +139,7 @@ class LmdbEnvTest {
         @Test
         void fdReportsANonNegativeDescriptor(@TempDir Path dir) {
             // Given an open environment
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 // Then it reports a plausible native file descriptor/handle
                 assertThat(sut.fd()).isGreaterThanOrEqualTo(0L);
             }
@@ -152,7 +153,7 @@ class LmdbEnvTest {
         void flagsReportsWhatItWasOpenedWith(@TempDir Path dir) {
             // Given an environment opened with NOSUBDIR
             Path file = dir.resolve("single.mdb");
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(file, EnumSet.of(LmdbEnvFlag.NOSUBDIR))) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(file, EnumSet.of(LmdbEnvFlag.NOSUBDIR))) {
                 // Then flags() reports it
                 assertThat(sut.flags()).contains(LmdbEnvFlag.NOSUBDIR);
             }
@@ -161,7 +162,7 @@ class LmdbEnvTest {
         @Test
         void setFlagsAddsAndClearsAFlagAtRuntime(@TempDir Path dir) {
             // Given an environment opened without NOSYNC
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 assertThat(sut.flags()).doesNotContain(LmdbEnvFlag.NOSYNC);
 
                 // When NOSYNC is set at runtime
@@ -185,7 +186,7 @@ class LmdbEnvTest {
         @Test
         void syncSucceedsOnAFreshEnvironment(@TempDir Path dir) {
             // Given an open environment with nothing written yet
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 // When flushed, both unconditionally and only-if-needed
                 ThrowingCallable forced = () -> sut.sync(true);
                 ThrowingCallable unforced = () -> sut.sync(false);
@@ -203,7 +204,7 @@ class LmdbEnvTest {
         @Test
         void aChildTransactionsWritesAreVisibleAfterBothCommit(@TempDir Path dir) {
             // Given an environment and a parent write transaction
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 LmdbDbi dbi;
                 try (LmdbTxn parent = sut.beginTxn()) {
                     dbi = parent.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
@@ -226,7 +227,7 @@ class LmdbEnvTest {
         @Test
         void aChildTransactionsAbortLeavesTheParentUnaffected(@TempDir Path dir) {
             // Given a parent write transaction
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 LmdbDbi dbi;
                 try (LmdbTxn parent = sut.beginTxn()) {
                     dbi = parent.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
@@ -249,7 +250,7 @@ class LmdbEnvTest {
         @Test
         void rejectsANullParent(@TempDir Path dir) {
             // Given an open environment
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 // When a nested transaction is begun with a null parent
                 ThrowingCallable result = () -> sut.beginTxn(null, Set.of());
 
@@ -266,7 +267,7 @@ class LmdbEnvTest {
         void copiesEntriesToAFreshDirectory(@TempDir Path sourceDir, @TempDir Path destDir) {
             // Given an environment with an entry written and committed
             LmdbDbi dbi;
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(sourceDir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(sourceDir, Set.of())) {
                 try (LmdbTxn txn = sut.beginTxn()) {
                     dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
                     txn.put(dbi, "k".getBytes(), "v".getBytes(), Set.of());
@@ -278,7 +279,7 @@ class LmdbEnvTest {
             }
 
             // Then the copy opens independently and contains the same entry
-            try (LmdbEnv copy = LmdbEnv.create().mapSize(10L << 20).open(destDir, Set.of())) {
+            try (LmdbEnv copy = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(destDir, Set.of())) {
                 try (LmdbTxn txn = copy.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                     LmdbDbi copyDbi = txn.openDatabase(Set.of());
                     assertThat(txn.get(copyDbi, "k".getBytes())).isEqualTo("v".getBytes());
@@ -290,7 +291,7 @@ class LmdbEnvTest {
         void compactFlagAlsoProducesAReadableCopy(@TempDir Path sourceDir, @TempDir Path destDir) {
             // Given an environment with an entry written and committed
             LmdbDbi dbi;
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(sourceDir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(sourceDir, Set.of())) {
                 try (LmdbTxn txn = sut.beginTxn()) {
                     dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
                     txn.put(dbi, "k".getBytes(), "v".getBytes(), Set.of());
@@ -302,7 +303,7 @@ class LmdbEnvTest {
             }
 
             // Then the copy still opens and reads back the same entry
-            try (LmdbEnv copy = LmdbEnv.create().mapSize(10L << 20).open(destDir, Set.of())) {
+            try (LmdbEnv copy = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(destDir, Set.of())) {
                 try (LmdbTxn txn = copy.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                     LmdbDbi copyDbi = txn.openDatabase(Set.of());
                     assertThat(txn.get(copyDbi, "k".getBytes())).isEqualTo("v".getBytes());
@@ -313,7 +314,7 @@ class LmdbEnvTest {
         @Test
         void rejectsANonExistentDestination(@TempDir Path sourceDir, @TempDir Path destDir) {
             // Given an open environment and a destination directory that doesn't exist
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(sourceDir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(sourceDir, Set.of())) {
                 Path missing = destDir.resolve("does-not-exist");
 
                 // When copied there
@@ -331,7 +332,7 @@ class LmdbEnvTest {
         @Test
         void reportsNoActiveReadersOnAFreshEnvironment(@TempDir Path dir) {
             // Given a freshly opened environment with no read transactions
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 List<String> lines = new ArrayList<>();
 
                 // When the reader lock table is dumped
@@ -348,7 +349,7 @@ class LmdbEnvTest {
         @Test
         void reportsAnActiveReaderWithAHeaderLine(@TempDir Path dir) {
             // Given an environment with one active read-only transaction
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of());
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of());
                     LmdbTxn _ = sut.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                 List<String> lines = new ArrayList<>();
 
@@ -369,7 +370,7 @@ class LmdbEnvTest {
         @Test
         void returningFalseStopsTheDumpEarly(@TempDir Path dir) {
             // Given an environment with an active reader, so more than one line would be reported
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of());
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of());
                     LmdbTxn _ = sut.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                 AtomicInteger calls = new AtomicInteger();
 
@@ -387,7 +388,7 @@ class LmdbEnvTest {
         @Test
         void aHandlerThatThrowsDoesNotCrashTheJvm(@TempDir Path dir) {
             // Given a freshly opened environment
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 // When the handler throws
                 ThrowingCallable result = () -> sut.listReaders(line -> {
                     throw new RuntimeException("boom");
@@ -402,7 +403,7 @@ class LmdbEnvTest {
         @Test
         void rejectsANullHandler(@TempDir Path dir) {
             // Given an open environment
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 // When listing readers with a null handler
                 ThrowingCallable result = () -> sut.listReaders(null);
 
@@ -421,7 +422,7 @@ class LmdbEnvTest {
             // needed so the environment has a valid earlier metapage to roll
             // back to; mdb_env_rollback can't undo an environment's very
             // first commit
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 LmdbDbi dbi;
                 try (LmdbTxn txn = sut.beginTxn()) {
                     dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
@@ -452,7 +453,7 @@ class LmdbEnvTest {
             // there is a valid earlier metapage to roll back to) already
             // rolled back once — each commit writes a key, since an empty
             // write transaction may not advance LMDB's metapage txnid at all
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 LmdbDbi dbi;
                 try (LmdbTxn txn = sut.beginTxn()) {
                     dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
@@ -478,7 +479,7 @@ class LmdbEnvTest {
         @Test
         void rollingBackATxnidThatWasNeverCommittedFails(@TempDir Path dir) {
             // Given a freshly opened environment
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 // When rolled back with a txnid that was never committed
                 ThrowingCallable result = () -> sut.rollback(999_999L);
 
@@ -494,7 +495,7 @@ class LmdbEnvTest {
         @Test
         void reportsNoStaleReadersOnAFreshEnvironment(@TempDir Path dir) {
             // Given a freshly opened environment with no read transactions
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 // When stale reader slots are checked
                 int cleared = sut.checkReaders();
 
@@ -506,7 +507,7 @@ class LmdbEnvTest {
         @Test
         void doesNotCountALiveReaderAsStale(@TempDir Path dir) {
             // Given an environment with one active (non-stale) read-only transaction
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of());
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of());
                     LmdbTxn _ = sut.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
                 // When stale reader slots are checked
                 int cleared = sut.checkReaders();
@@ -523,7 +524,7 @@ class LmdbEnvTest {
         @Test
         void dumpsChangesSinceAnEarlierTransactionToAFile(@TempDir Path dir, @TempDir Path dumpDir) {
             // Given two committed write transactions
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 LmdbDbi dbi;
                 long firstTxnid;
                 try (LmdbTxn txn = sut.beginTxn()) {
@@ -554,7 +555,7 @@ class LmdbEnvTest {
         @Test
         void rejectsANullPath(@TempDir Path dir) {
             // Given an open environment
-            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
                 // When dumped to a null path
                 ThrowingCallable result = () -> sut.incrementalDumpTo(null, 1L);
 

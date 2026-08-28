@@ -15,14 +15,14 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 /// multiple databases, all residing in the same shared memory map at one
 /// filesystem path.
 ///
-/// Configuration ([#mapSize(long)], [#maxDatabases(int)], [#maxReaders(int)])
-/// must happen before [#open(Path, Set, int)]; LMDB rejects changing them on
-/// an open environment. Not thread-safe to configure or open concurrently,
-/// but the resulting environment (via its transactions) is safe to share
-/// across threads.
+/// Configuration ([#mapSize(LmdbByteSize)], [#maxDatabases(int)],
+/// [#maxReaders(int)]) must happen before [#open(Path, Set, int)]; LMDB
+/// rejects changing them on an open environment. Not thread-safe to configure
+/// or open concurrently, but the resulting environment (via its transactions)
+/// is safe to share across threads.
 ///
 /// {@snippet :
-/// try (LmdbEnv env = LmdbEnv.create().mapSize(10L << 20).open(dbPath, EnumSet.of(LmdbEnvFlag.NOSUBDIR))) {
+/// try (LmdbEnv env = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dbPath, EnumSet.of(LmdbEnvFlag.NOSUBDIR))) {
 ///     try (LmdbTxn txn = env.beginTxn()) {
 ///         LmdbDbi dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
 ///         txn.put(dbi, "key".getBytes(UTF_8), "value".getBytes(UTF_8), Set.of());
@@ -70,13 +70,14 @@ public final class LmdbEnv extends NativeObject {
     /// Sets the size of the memory map (and so the maximum size of all
     /// databases combined). Must be called before [#open(Path, Set, int)].
     ///
-    /// @param bytes the map size, in bytes
+    /// @param bytes the map size
     /// @return `this`, for chaining
     /// @throws LmdbException if the native call fails
-    public LmdbEnv mapSize(long bytes) {
+    public LmdbEnv mapSize(LmdbByteSize bytes) {
+        Objects.requireNonNull(bytes, "bytes");
         int code;
         try {
-            code = (int) Bindings.ENV_SET_MAPSIZE.invokeExact(ptr(), bytes);
+            code = (int) Bindings.ENV_SET_MAPSIZE.invokeExact(ptr(), bytes.bytes());
         } catch (Throwable t) {
             throw NativeCall.rethrow(t);
         }
@@ -140,17 +141,20 @@ public final class LmdbEnv extends NativeObject {
         }
     }
 
-    /// Sets the size of database pages, in bytes. Must be called before
+    /// Sets the size of database pages. Must be called before
     /// [#open(Path, Set, int)]; defaults to the OS page size. Rarely needed
     /// outside filesystems (e.g. ZFS) that don't share the OS's own page size.
     ///
-    /// @param bytes the page size, in bytes
+    /// @param bytes the page size
     /// @return `this`, for chaining
-    /// @throws LmdbException if the native call fails
-    public LmdbEnv pageSize(int bytes) {
+    /// @throws LmdbException      if the native call fails
+    /// @throws ArithmeticException if `bytes` exceeds `Integer.MAX_VALUE`
+    ///                             (`mdb_env_set_pagesize` takes a native `int`)
+    public LmdbEnv pageSize(LmdbByteSize bytes) {
+        Objects.requireNonNull(bytes, "bytes");
         int code;
         try {
-            code = (int) Bindings.ENV_SET_PAGESIZE.invokeExact(ptr(), bytes);
+            code = (int) Bindings.ENV_SET_PAGESIZE.invokeExact(ptr(), bytes.toIntBytes());
         } catch (Throwable t) {
             throw NativeCall.rethrow(t);
         }
@@ -197,14 +201,14 @@ public final class LmdbEnv extends NativeObject {
         return this;
     }
 
-    /// The maximum size, in bytes, of a key (or of a data value in an
-    /// `MDB_DUPSORT` database) this environment accepts. Depends on the
-    /// compile-time page size; typically 511 bytes.
+    /// The maximum size of a key (or of a data value in an `MDB_DUPSORT`
+    /// database) this environment accepts. Depends on the compile-time page
+    /// size; typically 511 bytes.
     ///
-    /// @return the maximum key size, in bytes
-    public int maxKeySize() {
+    /// @return the maximum key size
+    public LmdbByteSize maxKeySize() {
         try {
-            return (int) Bindings.ENV_GET_MAXKEYSIZE.invokeExact(ptr());
+            return LmdbByteSize.ofBytes((int) Bindings.ENV_GET_MAXKEYSIZE.invokeExact(ptr()));
         } catch (Throwable t) {
             throw NativeCall.rethrow(t);
         }

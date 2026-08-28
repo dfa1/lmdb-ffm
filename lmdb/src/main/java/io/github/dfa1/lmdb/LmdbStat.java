@@ -27,14 +27,15 @@ public final class LmdbStat {
     private static final VarHandle ENTRIES =
             Bindings.STAT_LAYOUT.varHandle(MemoryLayout.PathElement.groupElement("ms_entries"));
 
-    private final int pageSize;
+    private final LmdbByteSize pageSize;
     private final int depth;
     private final long branchPages;
     private final long leafPages;
     private final long overflowPages;
     private final long entries;
 
-    private LmdbStat(int pageSize, int depth, long branchPages, long leafPages, long overflowPages, long entries) {
+    private LmdbStat(
+            LmdbByteSize pageSize, int depth, long branchPages, long leafPages, long overflowPages, long entries) {
         this.pageSize = pageSize;
         this.depth = depth;
         this.branchPages = branchPages;
@@ -45,7 +46,7 @@ public final class LmdbStat {
 
     static LmdbStat of(MemorySegment stat) {
         return new LmdbStat(
-                (int) PSIZE.get(stat, 0L),
+                LmdbByteSize.ofBytes((int) PSIZE.get(stat, 0L)),
                 (int) DEPTH.get(stat, 0L),
                 (long) BRANCH_PAGES.get(stat, 0L),
                 (long) LEAF_PAGES.get(stat, 0L),
@@ -53,10 +54,10 @@ public final class LmdbStat {
                 (long) ENTRIES.get(stat, 0L));
     }
 
-    /// The size of a database page, in bytes (the same for every database).
+    /// The size of a database page (the same for every database).
     ///
-    /// @return the page size, in bytes
-    public int pageSize() {
+    /// @return the page size
+    public LmdbByteSize pageSize() {
         return pageSize;
     }
 
@@ -100,7 +101,7 @@ public final class LmdbStat {
         if (!(o instanceof LmdbStat other)) {
             return false;
         }
-        return pageSize == other.pageSize
+        return pageSize.equals(other.pageSize)
                 && depth == other.depth
                 && branchPages == other.branchPages
                 && leafPages == other.leafPages
