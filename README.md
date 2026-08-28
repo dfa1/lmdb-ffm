@@ -14,10 +14,12 @@ The differentiator is the **zero-copy read path**: a lookup hands back a
 `MemorySegment` pointing directly into the memory-mapped database file — no
 `byte[]` copy — valid for the life of the read transaction.
 
-Currently covers environments, transactions, named databases, get/put/delete
-and cursors — enough to build on, not (yet) LMDB's full surface. See
-[API coverage](#api-coverage) below for exactly what's bound and what isn't,
-and [CLAUDE.md](CLAUDE.md) for the design decisions behind what's here.
+Currently covers environments, transactions, named databases, get/put/delete,
+cursors, custom key/value ordering, reader-lock diagnostics, and two-phase-commit
+rollback/incremental backup — enough to build on, not (yet) LMDB's full
+surface. See [API coverage](#api-coverage) below for exactly what's bound and
+what isn't, and [CLAUDE.md](CLAUDE.md) for the design decisions behind what's
+here.
 
 ## Quickstart
 
@@ -79,6 +81,19 @@ try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
 `MemorySegment` or direct `ByteBuffer` key/data too, for callers whose bytes
 are already off-heap — an mmap slice, a network buffer, an arena allocation —
 with no `byte[]` bounce on either side of the call.
+
+Custom key ordering — LMDB calls back into Java for every comparison, via a
+`Linker.upcallStub` trampoline, not just another downcall:
+
+```java
+try (LmdbTxn txn = env.beginTxn()) {
+    LmdbDbi dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+    // Must be set before any data is read or written through dbi, and the
+    // same comparator must be used every time this database is opened.
+    txn.setComparator(dbi, (a, b) -> Long.compare(a.byteSize(), b.byteSize()));
+    txn.commit();
+}
+```
 
 Run with `--enable-native-access=ALL-UNNAMED`.
 
