@@ -487,4 +487,80 @@ class LmdbEnvTest {
             }
         }
     }
+
+    @Nested
+    class ReaderCheck {
+
+        @Test
+        void reportsNoStaleReadersOnAFreshEnvironment(@TempDir Path dir) {
+            // Given a freshly opened environment with no read transactions
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                // When stale reader slots are checked
+                int cleared = sut.checkReaders();
+
+                // Then there is nothing to clear
+                assertThat(cleared).isZero();
+            }
+        }
+
+        @Test
+        void doesNotCountALiveReaderAsStale(@TempDir Path dir) {
+            // Given an environment with one active (non-stale) read-only transaction
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of());
+                    LmdbTxn _ = sut.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                // When stale reader slots are checked
+                int cleared = sut.checkReaders();
+
+                // Then the live reader is left alone
+                assertThat(cleared).isZero();
+            }
+        }
+    }
+
+    @Nested
+    class IncrementalDump {
+
+        @Test
+        void dumpsChangesSinceAnEarlierTransactionToAFile(@TempDir Path dir, @TempDir Path dumpDir) {
+            // Given two committed write transactions
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                LmdbDbi dbi;
+                long firstTxnid;
+                try (LmdbTxn txn = sut.beginTxn()) {
+                    dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                    txn.put(dbi, "seed".getBytes(), "1".getBytes(), Set.of());
+                    firstTxnid = txn.id();
+                    txn.commit();
+                }
+                try (LmdbTxn txn = sut.beginTxn()) {
+                    txn.put(dbi, "k".getBytes(), "v".getBytes(), Set.of());
+                    txn.commit();
+                }
+
+                // When an incremental dump since the first transaction is written
+                Path dumpFile = dumpDir.resolve("incr.mdb");
+                sut.incrementalDumpTo(dumpFile, firstTxnid);
+
+                // Then the dump file is created
+                assertThat(dumpFile).exists();
+
+                // And, an LMDB implementation quirk in mdb_env_incr_dump: this
+                // environment's own flags now report NOSUBDIR, even though it
+                // was never opened with it
+                assertThat(sut.flags()).contains(LmdbEnvFlag.NOSUBDIR);
+            }
+        }
+
+        @Test
+        void rejectsANullPath(@TempDir Path dir) {
+            // Given an open environment
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(10L << 20).open(dir, Set.of())) {
+                // When dumped to a null path
+                ThrowingCallable result = () -> sut.incrementalDumpTo(null, 1L);
+
+                // Then it fails fast
+                assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+            }
+        }
+    }
 }

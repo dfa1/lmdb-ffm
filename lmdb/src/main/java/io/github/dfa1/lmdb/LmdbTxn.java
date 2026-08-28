@@ -259,6 +259,124 @@ public final class LmdbTxn extends NativeObject {
         }
     }
 
+    /// Compares `a` and `b` as if they were keys in `dbi` (`mdb_cmp`), using
+    /// whatever key-comparison function is active there — LMDB's default
+    /// lexicographic order, or a custom [LmdbComparator] installed via
+    /// [#setComparator(LmdbDbi, LmdbComparator)].
+    ///
+    /// @param dbi the database whose key-comparison function to use
+    /// @param a   the first key
+    /// @param b   the second key
+    /// @return negative if `a` orders before `b`, positive if after, `0` if equal
+    public int compare(LmdbDbi dbi, byte[] a, byte[] b) {
+        Objects.requireNonNull(dbi, "dbi");
+        Objects.requireNonNull(a, "a");
+        Objects.requireNonNull(b, "b");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment aVal = LmdbVal.of(arena, a);
+            MemorySegment bVal = LmdbVal.of(arena, b);
+            try {
+                return (int) Bindings.CMP.invokeExact(ptr(), dbi.handle(), aVal, bVal);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+        }
+    }
+
+    /// [#compare(LmdbDbi, byte[], byte[])] with zero-copy keys.
+    ///
+    /// @param dbi the database whose key-comparison function to use
+    /// @param a   native bytes for the first key (not retained after this call)
+    /// @param b   native bytes for the second key (likewise not retained)
+    /// @return negative if `a` orders before `b`, positive if after, `0` if equal
+    public int compare(LmdbDbi dbi, MemorySegment a, MemorySegment b) {
+        Objects.requireNonNull(dbi, "dbi");
+        NativeCall.requireNative(a, "a");
+        NativeCall.requireNative(b, "b");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment aVal = LmdbVal.of(arena, a);
+            MemorySegment bVal = LmdbVal.of(arena, b);
+            try {
+                return (int) Bindings.CMP.invokeExact(ptr(), dbi.handle(), aVal, bVal);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+        }
+    }
+
+    /// [#compare(LmdbDbi, byte[], byte[])] for direct [ByteBuffer] keys — see
+    /// [#getSegment(LmdbDbi, ByteBuffer)] for the key-range/heap-buffer caveats.
+    ///
+    /// @param dbi the database whose key-comparison function to use
+    /// @param a   the first key, as a direct buffer's remaining content
+    /// @param b   the second key, as a direct buffer's remaining content
+    /// @return negative if `a` orders before `b`, positive if after, `0` if equal
+    public int compare(LmdbDbi dbi, ByteBuffer a, ByteBuffer b) {
+        Objects.requireNonNull(a, "a");
+        Objects.requireNonNull(b, "b");
+        return compare(dbi, MemorySegment.ofBuffer(a), MemorySegment.ofBuffer(b));
+    }
+
+    /// Compares `a` and `b` as if they were duplicate data values under one
+    /// key in `dbi` (`mdb_dcmp`) — the sibling of [#compare(LmdbDbi, byte[], byte[])]
+    /// for an `MDB_DUPSORT` database's value ordering instead of its key
+    /// ordering, using LMDB's default order or a custom [LmdbComparator]
+    /// installed via [#setDupComparator(LmdbDbi, LmdbComparator)].
+    ///
+    /// @param dbi the `MDB_DUPSORT` database whose value-comparison function to use
+    /// @param a   the first value
+    /// @param b   the second value
+    /// @return negative if `a` orders before `b`, positive if after, `0` if equal
+    public int compareData(LmdbDbi dbi, byte[] a, byte[] b) {
+        Objects.requireNonNull(dbi, "dbi");
+        Objects.requireNonNull(a, "a");
+        Objects.requireNonNull(b, "b");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment aVal = LmdbVal.of(arena, a);
+            MemorySegment bVal = LmdbVal.of(arena, b);
+            try {
+                return (int) Bindings.DCMP.invokeExact(ptr(), dbi.handle(), aVal, bVal);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+        }
+    }
+
+    /// [#compareData(LmdbDbi, byte[], byte[])] with zero-copy values.
+    ///
+    /// @param dbi the `MDB_DUPSORT` database whose value-comparison function to use
+    /// @param a   native bytes for the first value (not retained after this call)
+    /// @param b   native bytes for the second value (likewise not retained)
+    /// @return negative if `a` orders before `b`, positive if after, `0` if equal
+    public int compareData(LmdbDbi dbi, MemorySegment a, MemorySegment b) {
+        Objects.requireNonNull(dbi, "dbi");
+        NativeCall.requireNative(a, "a");
+        NativeCall.requireNative(b, "b");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment aVal = LmdbVal.of(arena, a);
+            MemorySegment bVal = LmdbVal.of(arena, b);
+            try {
+                return (int) Bindings.DCMP.invokeExact(ptr(), dbi.handle(), aVal, bVal);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+        }
+    }
+
+    /// [#compareData(LmdbDbi, byte[], byte[])] for direct [ByteBuffer] values
+    /// — see [#getSegment(LmdbDbi, ByteBuffer)] for the key-range/heap-buffer
+    /// caveats.
+    ///
+    /// @param dbi the `MDB_DUPSORT` database whose value-comparison function to use
+    /// @param a   the first value, as a direct buffer's remaining content
+    /// @param b   the second value, as a direct buffer's remaining content
+    /// @return negative if `a` orders before `b`, positive if after, `0` if equal
+    public int compareData(LmdbDbi dbi, ByteBuffer a, ByteBuffer b) {
+        Objects.requireNonNull(a, "a");
+        Objects.requireNonNull(b, "b");
+        return compareData(dbi, MemorySegment.ofBuffer(a), MemorySegment.ofBuffer(b));
+    }
+
     /// The flags this transaction is running with (e.g. [LmdbEnvFlag#RDONLY]),
     /// as passed to [LmdbEnv#beginTxn(Set)] plus any inherited from
     /// [LmdbEnv#open(Path, Set)].

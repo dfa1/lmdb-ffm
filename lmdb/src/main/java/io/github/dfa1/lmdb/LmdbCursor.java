@@ -57,8 +57,18 @@ public final class LmdbCursor extends NativeObject {
     // never reallocated per call once a caller's key sizes stabilize.
     private MemorySegment keyBuffer;
 
-    private LmdbCursor(MemorySegment ptr) {
+    // mdb_cursor_dbi/mdb_cursor_txn are tracked here in Java instead of bound
+    // as native calls: this cursor already knows both from #open, and #renew
+    // is the only way either ever changes (dbi never does — see #renew's own
+    // doc — only txn does), so a native round-trip would learn nothing this
+    // object doesn't already have.
+    private final LmdbDbi dbi;
+    private LmdbTxn txn;
+
+    private LmdbCursor(MemorySegment ptr, LmdbTxn txn, LmdbDbi dbi) {
         super(ptr);
+        this.txn = txn;
+        this.dbi = dbi;
     }
 
     static LmdbCursor open(LmdbTxn txn, LmdbDbi dbi) {
@@ -71,8 +81,26 @@ public final class LmdbCursor extends NativeObject {
                 throw NativeCall.rethrow(t);
             }
             NativeCall.check(code);
-            return new LmdbCursor(out.get(ADDRESS, 0));
+            return new LmdbCursor(out.get(ADDRESS, 0), txn, dbi);
         }
+    }
+
+    /// The database this cursor navigates (`mdb_cursor_dbi`) — set when it
+    /// was opened and never changes afterward, since [#renew(LmdbTxn)]
+    /// re-associates only the transaction, not the database.
+    ///
+    /// @return this cursor's database
+    public LmdbDbi dbi() {
+        return dbi;
+    }
+
+    /// The transaction this cursor currently operates within (`mdb_cursor_txn`)
+    /// — the one it was opened with, or the most recent one passed to
+    /// [#renew(LmdbTxn)].
+    ///
+    /// @return this cursor's current transaction
+    public LmdbTxn txn() {
+        return txn;
     }
 
     /// Re-associates this cursor — only ever valid on a read-only
@@ -93,6 +121,7 @@ public final class LmdbCursor extends NativeObject {
             throw NativeCall.rethrow(t);
         }
         NativeCall.check(code);
+        this.txn = txn;
     }
 
     /// Positions this cursor per `op` (one with no explicit key/data input,
@@ -340,6 +369,24 @@ public final class LmdbCursor extends NativeObject {
             NativeCall.check(code);
             return countPtr.get(JAVA_LONG, 0L);
         }
+    }
+
+    /// Whether this cursor is currently positioned on a named-database
+    /// record (`mdb_cursor_is_db`) — meaningful only for a cursor navigating
+    /// the environment's unnamed database, where each named database opened
+    /// via [LmdbTxn#openDatabase(String, Set)] appears as one entry
+    /// alongside any plain user keys.
+    ///
+    /// @return `true` if the current entry is itself a named database
+    /// @throws LmdbException if the native call fails
+    public boolean isDb() {
+        int result;
+        try {
+            result = (int) Bindings.CURSOR_IS_DB.invokeExact(ptr());
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        return result != 0;
     }
 
     @Override

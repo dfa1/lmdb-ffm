@@ -380,6 +380,38 @@ public final class LmdbEnv extends NativeObject {
         }
     }
 
+    /// Performs an incremental (delta-since-`sinceTxnid`) backup of this
+    /// environment to `path` (`mdb_env_incr_dump`), for pairing with
+    /// [#rollback(long)]-style two-phase-commit recovery: `sinceTxnid` is the
+    /// last transaction ID already captured by an earlier full or
+    /// incremental backup.
+    ///
+    /// This has a real side effect on this environment beyond writing
+    /// `path`: LMDB's implementation of this call unconditionally sets
+    /// [LmdbEnvFlag#NOSUBDIR] on this environment's own flags, so
+    /// [#flags()] reports it afterward even if this environment was never
+    /// opened with it. That is an LMDB implementation quirk in this call,
+    /// not something this binding adds or can suppress.
+    ///
+    /// @param path        the file to write the incremental backup to —
+    ///                    must not already exist
+    /// @param sinceTxnid  the transaction ID of a previous backup; must be
+    ///                    greater than `0`
+    /// @throws LmdbException if the dump fails
+    public void incrementalDumpTo(Path path, long sinceTxnid) {
+        Objects.requireNonNull(path, "path");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment pathPtr = arena.allocateFrom(path.toString());
+            int code;
+            try {
+                code = (int) Bindings.ENV_INCR_DUMP.invokeExact(ptr(), pathPtr, sinceTxnid);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+        }
+    }
+
     /// Rolls back the last committed transaction, undoing its writes as if it
     /// had never committed (`mdb_env_rollback`) — for two-phase commit
     /// protocols only: use this when the local phase of a multi-phase
@@ -477,6 +509,26 @@ public final class LmdbEnv extends NativeObject {
             } catch (Throwable t) {
                 throw NativeCall.rethrow(t);
             }
+        }
+    }
+
+    /// Clears stale entries in the reader lock table (`mdb_reader_check`) —
+    /// reader slots left behind by a process that held a read-only
+    /// transaction open and then crashed or was killed without releasing it.
+    ///
+    /// @return the number of stale slots that were cleared
+    /// @throws LmdbException if the native call fails
+    public int checkReaders() {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment deadPtr = arena.allocate(JAVA_INT);
+            int code;
+            try {
+                code = (int) Bindings.READER_CHECK.invokeExact(ptr(), deadPtr);
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+            return deadPtr.get(JAVA_INT, 0L);
         }
     }
 

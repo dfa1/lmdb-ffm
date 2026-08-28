@@ -96,18 +96,18 @@ for the build.
 
 ## API coverage
 
-46 of `lmdb.h`'s 69 `mdb_*` functions are bound today (this count was
+51 of `lmdb.h`'s 69 `mdb_*` functions are bound today (this count was
 previously, incorrectly, given as 65 — `mdb_txn_id`, `mdb_txn_env`,
 `mdb_cursor_dbi` and `mdb_cursor_txn` had been left out of the inventory
 entirely, not just miscategorized):
 
 | Area | Bound |
 |---|---|
-| Environment | `mdb_env_create`, `mdb_env_open`, `mdb_env_close`, `mdb_env_set_mapsize`, `mdb_env_set_maxdbs`, `mdb_env_set_maxreaders`, `mdb_env_get_maxreaders`, `mdb_env_set_pagesize`, `mdb_env_get_maxkeysize`, `mdb_env_sync`, `mdb_env_set_flags`, `mdb_env_get_flags`, `mdb_env_get_path`, `mdb_env_get_fd`, `mdb_env_stat`, `mdb_env_info`, `mdb_env_copy2`, `mdb_reader_list`, `mdb_env_rollback` |
+| Environment | `mdb_env_create`, `mdb_env_open`, `mdb_env_close`, `mdb_env_set_mapsize`, `mdb_env_set_maxdbs`, `mdb_env_set_maxreaders`, `mdb_env_get_maxreaders`, `mdb_env_set_pagesize`, `mdb_env_get_maxkeysize`, `mdb_env_sync`, `mdb_env_set_flags`, `mdb_env_get_flags`, `mdb_env_get_path`, `mdb_env_get_fd`, `mdb_env_stat`, `mdb_env_info`, `mdb_env_copy2`, `mdb_reader_list`, `mdb_env_rollback`, `mdb_reader_check`, `mdb_env_incr_dump` |
 | Transactions | `mdb_txn_begin`, `mdb_txn_commit`, `mdb_txn_abort`, `mdb_txn_prepare`, `mdb_txn_reset`, `mdb_txn_renew`, `mdb_txn_flags`, `mdb_txn_id` |
-| Databases | `mdb_dbi_open`, `mdb_dbi_close`, `mdb_dbi_flags`, `mdb_drop`, `mdb_set_compare`, `mdb_set_dupsort` |
+| Databases | `mdb_dbi_open`, `mdb_dbi_close`, `mdb_dbi_flags`, `mdb_drop`, `mdb_set_compare`, `mdb_set_dupsort`, `mdb_cmp`, `mdb_dcmp` |
 | Data access | `mdb_get`, `mdb_put`, `mdb_del`, `mdb_stat` |
-| Cursors | `mdb_cursor_open`, `mdb_cursor_close`, `mdb_cursor_get`, `mdb_cursor_put`, `mdb_cursor_del`, `mdb_cursor_count`, `mdb_cursor_renew` |
+| Cursors | `mdb_cursor_open`, `mdb_cursor_close`, `mdb_cursor_get`, `mdb_cursor_put`, `mdb_cursor_del`, `mdb_cursor_count`, `mdb_cursor_renew`, `mdb_cursor_is_db` |
 | Misc | `mdb_version`, `mdb_strerror` |
 
 `mdb_env_rollback` pairs with `mdb_txn_id` (`LmdbTxn#id()`): a two-phase-commit
@@ -116,7 +116,19 @@ later hand that ID to `LmdbEnv#rollback(long)` to undo exactly that commit if
 some other participant fails to follow through — but only immediately after
 the commit, with no other operation on the environment in between, and never
 for an environment's very first commit (there is no earlier metapage to roll
-back to yet).
+back to yet). `mdb_env_incr_dump` pairs with it too, for incremental backup:
+`LmdbEnv#incrementalDumpTo(Path, long)` dumps everything committed since an
+earlier backup's transaction ID — but as a real, LMDB-internal side effect,
+it unconditionally sets `MDB_NOSUBDIR` on the environment's own flags, so
+`LmdbEnv#flags()` reports it afterward even on an environment never opened
+with it.
+
+`mdb_cursor_dbi`/`mdb_cursor_txn` (the database/transaction a cursor was
+opened on) and `mdb_txn_env` (a transaction's owning environment) are all
+tracked in Java instead of bound as native calls: `LmdbCursor`/`LmdbTxn`
+already know these from how they were constructed, so a native round-trip
+would only relearn what the object already has — see `LmdbCursor#dbi()`/`#txn()`
+and `LmdbTxn#env()`.
 
 `mdb_set_compare`/`mdb_set_dupsort` (`MDB_cmp_func*`) and `mdb_reader_list`
 (`MDB_msg_func*`) all take a function pointer LMDB calls back into — a Java
@@ -130,23 +142,18 @@ trampoline's lifetime: a comparator must keep working for as long as the
 the `LmdbEnv`; `mdb_reader_list` only ever calls back synchronously within
 the one call that installs it, so its stub is scoped to that single call.
 
-Not yet bound (23):
+Not yet bound (18):
 
 | Function | Category | Purpose |
 |---|---|---|
-| `mdb_cmp` | Straightforward | Compare two keys using `dbi`'s active key-comparison function (default or custom) |
-| `mdb_dcmp` | Straightforward | Same, for the *data* comparison in a `DUPSORT` database |
-| `mdb_cursor_is_db` | Straightforward | Whether the cursor's current position is itself a named sub-database record |
-| `mdb_cursor_dbi` | Straightforward | The `dbi` a cursor was opened on — `LmdbCursor` doesn't currently retain it either, unlike `mdb_txn_env` below |
-| `mdb_cursor_txn` | Straightforward | The transaction a cursor was opened on — same gap as `mdb_cursor_dbi` |
-| `mdb_reader_check` | Straightforward | Clear stale reader-lock-table slots (e.g. from a crashed process); returns a count |
-| `mdb_env_copy` | Straightforward | Superseded — `copyTo`/`mdb_env_copy2` (bound) already covers this plus flags |
-| `mdb_env_copyfd` | Straightforward | Backup to an open file descriptor instead of a path (e.g. a pipe/socket) |
-| `mdb_env_copyfd2` | Straightforward | Same, with `MDB_CP_COMPACT` support |
-| `mdb_env_incr_dump` | Straightforward | Incremental (delta-since-`txnid`) backup to a path |
-| `mdb_env_incr_dumpfd` | Straightforward | Same, to an open file descriptor |
-| `mdb_env_incr_loadfd` | Straightforward | Load an incremental dump back in |
+| `mdb_env_copy` | Skippable | Superseded — `copyTo`/`mdb_env_copy2` (bound) already covers this plus flags |
+| `mdb_env_copyfd` | No clean fd source | Backup to an open OS file descriptor/`HANDLE` instead of a path — Java has no public, non-reflective way to obtain that raw value from a `java.io.FileDescriptor`, and this project avoids internal JDK APIs (see CLAUDE.md) |
+| `mdb_env_copyfd2` | No clean fd source | Same, with `MDB_CP_COMPACT` support — same fd problem as `mdb_env_copyfd` |
+| `mdb_env_incr_dumpfd` | No clean fd source | Incremental dump to an open file descriptor — same fd problem; `mdb_env_incr_dump` (bound) covers the path-based case |
+| `mdb_env_incr_loadfd` | No clean fd source | Reload an incremental dump from an open file descriptor — same fd problem |
 | `mdb_txn_env` | Skippable | A transaction's owning environment — already covered by `LmdbTxn#env()`, tracked in Java without a native round-trip |
+| `mdb_cursor_dbi` | Skippable | The `dbi` a cursor was opened on — tracked in Java by `LmdbCursor#dbi()`, same reasoning as `mdb_txn_env` |
+| `mdb_cursor_txn` | Skippable | The transaction a cursor currently operates within — tracked in Java by `LmdbCursor#txn()`, updated on `renew` |
 | `mdb_set_relctx` | Blocked (upcall) | Opaque context pointer for a relocation callback (`MDB_FIXEDMAP` only — a legacy, rarely-used mode) |
 | `mdb_set_relfunc` | Blocked (upcall) | The relocation callback itself, for the same legacy `MDB_FIXEDMAP` mode |
 | `mdb_env_set_assert` | Dead on this build | Custom assertion-failure handler/logger — inert here: this project's native builds pass `-DNDEBUG` (see `scripts/build-lmdb.sh`), which compiles out `mdb_env_set_assert`'s store of the callback pointer entirely (`mdb.c`'s own `#ifndef NDEBUG` guard around it), so the callback could never fire. It also always ends in `abort()` even on a debug build, so there'd be no safe way to exercise it in this project's tests either way. |

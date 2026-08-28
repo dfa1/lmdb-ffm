@@ -427,6 +427,108 @@ class LmdbCursorTest {
         }
     }
 
+    @Nested
+    class Introspection {
+
+        @Test
+        void dbiReportsTheDatabaseTheCursorWasOpenedOn() {
+            // Given a cursor opened on a database
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                // Then it reports that same database
+                assertThat(cursor.dbi()).isEqualTo(dbi);
+            }
+        }
+
+        @Test
+        void txnReportsTheOwningTransaction() {
+            // Given a cursor opened on a transaction
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                // Then it reports that same transaction
+                assertThat(cursor.txn()).isSameAs(txn);
+            }
+        }
+
+        @Test
+        void txnReflectsTheMostRecentRenew() {
+            // Given a cursor opened on one read-only transaction, then renewed onto another
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+            LmdbTxn firstTxn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+            LmdbCursor cursor = firstTxn.openCursor(dbi);
+            firstTxn.close();
+
+            try (LmdbTxn secondTxn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                // When renewed onto secondTxn
+                cursor.renew(secondTxn);
+
+                // Then it reports secondTxn, not the transaction it was opened with
+                assertThat(cursor.txn()).isSameAs(secondTxn);
+                cursor.close();
+            }
+        }
+
+        @Test
+        void isDbIsFalseForAPlainUserKey() {
+            // Given a plain key/value in the unnamed database
+            try (LmdbTxn txn = env.beginTxn()) {
+                LmdbDbi dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, bytes("k"), bytes("v"), Set.of());
+                txn.commit();
+            }
+
+            // When a cursor on the unnamed database is positioned on it
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                LmdbDbi root = txn.openDatabase(Set.of());
+                try (LmdbCursor cursor = txn.openCursor(root)) {
+                    cursor.get(LmdbCursorOp.SET, bytes("k"));
+
+                    // Then it is not reported as a named database
+                    assertThat(cursor.isDb()).isFalse();
+                }
+            }
+        }
+
+        @Test
+        void isDbIsTrueForANamedDatabaseEntry() {
+            // Given a named database opened alongside the unnamed one
+            try (LmdbTxn txn = env.beginTxn()) {
+                txn.openDatabase("named", EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+
+            // When a cursor on the unnamed (root) database is positioned on
+            // the named database's own entry there — SET_RANGE, not SET: the
+            // stored key is the name plus a trailing NUL (LMDB's mdb_dbi_open
+            // stores strlen(name) + 1 bytes, C-string style), so an exact
+            // match on the plain name bytes never hits
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                LmdbDbi root = txn.openDatabase(Set.of());
+                try (LmdbCursor cursor = txn.openCursor(root)) {
+                    LmdbCursor.Entry entry = cursor.get(LmdbCursorOp.SET_RANGE, bytes("named"));
+                    assertThat(entry).isNotNull();
+
+                    // Then it is reported as a named database
+                    assertThat(cursor.isDb()).isTrue();
+                }
+            }
+        }
+    }
+
     private static byte[] bytes(String s) {
         return s.getBytes(StandardCharsets.UTF_8);
     }

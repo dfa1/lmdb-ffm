@@ -885,6 +885,86 @@ class LmdbTxnTest {
         }
     }
 
+    @Nested
+    class Compare {
+
+        @Test
+        void compareOrdersLexicographicallyByDefault() {
+            // Given a plain database (default byte-lexicographic key order)
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+
+            // When two keys are compared
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                // Then the result matches plain byte-lexicographic order
+                assertThat(txn.compare(dbi, key("a"), key("b"))).isNegative();
+                assertThat(txn.compare(dbi, key("b"), key("a"))).isPositive();
+                assertThat(txn.compare(dbi, key("a"), key("a"))).isZero();
+            }
+        }
+
+        @Test
+        void compareUsesACustomComparatorWhenInstalled() {
+            // Given a database with a reverse-order key comparator installed
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.setComparator(dbi, reverseByteComparator());
+                txn.commit();
+            }
+
+            // When two keys are compared
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                // Then the result reflects the custom (reversed) order, not the default
+                assertThat(txn.compare(dbi, key("a"), key("b"))).isPositive();
+            }
+        }
+
+        @Test
+        void compareDataComparesDuplicateValuesInADupsortDatabase() {
+            // Given a DUPSORT database (default byte-lexicographic value order)
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.commit();
+            }
+
+            // When two values are compared
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                // Then the result matches plain byte-lexicographic order
+                assertThat(txn.compareData(dbi, value("1"), value("2"))).isNegative();
+                assertThat(txn.compareData(dbi, value("2"), value("1"))).isPositive();
+            }
+        }
+
+        @Test
+        void compareRejectsANullDbi() {
+            // Given a transaction
+            LmdbTxn sut = env.beginTxn();
+
+            // When comparing with a null dbi
+            ThrowingCallable result = () -> sut.compare(null, key("a"), key("b"));
+
+            // Then it fails fast
+            assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+        }
+
+        @Test
+        void compareDataRejectsANullDbi() {
+            // Given a transaction
+            LmdbTxn sut = env.beginTxn();
+
+            // When comparing data with a null dbi
+            ThrowingCallable result = () -> sut.compareData(null, value("1"), value("2"));
+
+            // Then it fails fast
+            assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+        }
+    }
+
     private static byte[] key(String s) {
         return s.getBytes(StandardCharsets.UTF_8);
     }

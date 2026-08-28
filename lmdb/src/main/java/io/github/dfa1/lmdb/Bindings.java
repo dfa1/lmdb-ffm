@@ -114,6 +114,12 @@ final class Bindings {
     // int mdb_env_rollback(MDB_env *env, mdb_size_t txnid)
     static final MethodHandle ENV_ROLLBACK =
             NativeLibrary.lookup("mdb_env_rollback", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
+    // int mdb_reader_check(MDB_env *env, int *dead)
+    static final MethodHandle READER_CHECK =
+            NativeLibrary.lookup("mdb_reader_check", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    // int mdb_env_incr_dump(MDB_env *env, const char *path, size_t txnid)
+    static final MethodHandle ENV_INCR_DUMP =
+            NativeLibrary.lookup("mdb_env_incr_dump", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
 
     // --- transactions ---
 
@@ -161,6 +167,12 @@ final class Bindings {
     // int mdb_stat(MDB_txn *txn, MDB_dbi dbi, MDB_stat *stat)
     static final MethodHandle STAT =
             NativeLibrary.lookup("mdb_stat", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS));
+    // int mdb_cmp(MDB_txn *txn, MDB_dbi dbi, const MDB_val *a, const MDB_val *b)
+    static final MethodHandle CMP =
+            NativeLibrary.lookup("mdb_cmp", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS));
+    // int mdb_dcmp(MDB_txn *txn, MDB_dbi dbi, const MDB_val *a, const MDB_val *b)
+    static final MethodHandle DCMP =
+            NativeLibrary.lookup("mdb_dcmp", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS));
 
     // typedef int (MDB_cmp_func)(const MDB_val *a, const MDB_val *b) — the
     // shape of the upcall stub LmdbComparators builds from a caller's
@@ -255,6 +267,9 @@ final class Bindings {
     // int mdb_cursor_count(MDB_cursor *cursor, mdb_size_t *countp)
     static final MethodHandle CURSOR_COUNT =
             NativeLibrary.lookup("mdb_cursor_count", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+    // int mdb_cursor_is_db(MDB_cursor *cursor)
+    static final MethodHandle CURSOR_IS_DB =
+            NativeLibrary.lookup("mdb_cursor_is_db", FunctionDescriptor.of(JAVA_INT, ADDRESS));
 
     private Bindings() {
         // no instances
