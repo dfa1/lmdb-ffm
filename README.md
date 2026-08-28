@@ -96,7 +96,9 @@ try (LmdbTxn txn = env.beginTxn()) {
 }
 ```
 
-Run with `--enable-native-access=ALL-UNNAMED`.
+Run with `--enable-native-access=ALL-UNNAMED` — or see [Install](#install)
+below for a module-path setup that grants native access only to this
+library's own module instead of the whole unnamed-module classpath.
 
 ## Platform support
 
@@ -224,7 +226,46 @@ Or, for a known single target, `lmdb` plus exactly one native classifier
 A [BOM](bom) (`io.github.dfa1.lmdb:lmdb-bom`) is also published, for pinning
 every module's version in one place via `<dependencyManagement>`.
 
-Requires JDK 25+ and `--enable-native-access=ALL-UNNAMED` at runtime.
+Requires JDK 25+ and, at runtime, `--enable-native-access=ALL-UNNAMED` — or,
+on the module path, see below.
+
+### Running on the module path
+
+Every published jar (`lmdb`, `lmdb-platform`, each `lmdb-native-<classifier>`)
+is a real named module, not an automatic one — so a modularized application
+can request native access for `io.github.dfa1.lmdb` specifically instead of
+blanket-granting it to the whole unnamed-module classpath via `ALL-UNNAMED`.
+
+For the `lmdb-platform` (zero-choice) dependency, a consuming module needs only:
+
+```java
+module com.example.app {
+    requires io.github.dfa1.lmdb.platform;
+}
+```
+
+For `lmdb` plus one native classifier directly, requires both:
+
+```java
+module com.example.app {
+    requires io.github.dfa1.lmdb;
+    requires io.github.dfa1.lmdb.natives.osx.aarch64;
+}
+```
+
+(Note `natives`, not `native` — the latter is a reserved Java keyword and
+cannot appear as a module name.) Either way, run with:
+
+```shell
+java --module-path <your-mods-dir> --enable-native-access=io.github.dfa1.lmdb -m com.example.app/com.example.app.Main
+```
+
+One Maven wrinkle if you write your own `module-info.java`: the
+`lmdb-native-<classifier>` dependency needs **compile** scope (Maven's
+default), not `runtime` — `requires` needs the module resolvable at compile
+time, and `runtime`-scoped dependencies aren't on the module path javac
+resolves against. Harmless either way: these modules export no package, so
+compile scope exposes no API a classpath consumer could reference regardless.
 
 ### Build from source
 

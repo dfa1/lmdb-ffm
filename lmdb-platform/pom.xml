@@ -21,7 +21,14 @@
 	     (osx/linux/windows, x86_64/aarch64), so a build runs on any supported
 	     OS/arch without choosing a classifier. For a known single target
 	     depend on lmdb + the one lmdb-native-<classifier> directly. Versions
-	     come from the parent's dependencyManagement. -->
+	     come from the parent's dependencyManagement.
+
+	     Default (compile) scope, not runtime: this module's own module-info.java
+	     `requires` each native module by name (so it's pulled into the resolved
+	     module graph for module-path consumers — see that file), and javac only
+	     puts compile-scoped dependencies on the module path it resolves `requires`
+	     against. None of them export any package, so compile scope leaks no API
+	     surface a classpath consumer could actually reference either way. -->
 	<dependencies>
 		<dependency>
 			<groupId>io.github.dfa1.lmdb</groupId>
@@ -30,32 +37,26 @@
 		<dependency>
 			<groupId>io.github.dfa1.lmdb</groupId>
 			<artifactId>lmdb-native-osx-aarch64</artifactId>
-			<scope>runtime</scope>
 		</dependency>
 		<dependency>
 			<groupId>io.github.dfa1.lmdb</groupId>
 			<artifactId>lmdb-native-osx-x86_64</artifactId>
-			<scope>runtime</scope>
 		</dependency>
 		<dependency>
 			<groupId>io.github.dfa1.lmdb</groupId>
 			<artifactId>lmdb-native-linux-x86_64</artifactId>
-			<scope>runtime</scope>
 		</dependency>
 		<dependency>
 			<groupId>io.github.dfa1.lmdb</groupId>
 			<artifactId>lmdb-native-linux-aarch64</artifactId>
-			<scope>runtime</scope>
 		</dependency>
 		<dependency>
 			<groupId>io.github.dfa1.lmdb</groupId>
 			<artifactId>lmdb-native-windows-x86_64</artifactId>
-			<scope>runtime</scope>
 		</dependency>
 		<dependency>
 			<groupId>io.github.dfa1.lmdb</groupId>
 			<artifactId>lmdb-native-windows-aarch64</artifactId>
-			<scope>runtime</scope>
 		</dependency>
 	</dependencies>
 </project>
