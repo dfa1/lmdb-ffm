@@ -1,6 +1,7 @@
 # lmdb-ffm
 
 [![CI](https://github.com/dfa1/lmdb-ffm/actions/workflows/ci.yml/badge.svg)](https://github.com/dfa1/lmdb-ffm/actions/workflows/ci.yml)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.dfa1.lmdb/lmdb.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/io.github.dfa1.lmdb/lmdb)
 ![LMDB](https://img.shields.io/badge/LMDB-1.0.1-green.svg)
 ![Java](https://img.shields.io/badge/Java-25%2B-orange.svg)
 [![License](https://img.shields.io/badge/License-OpenLDAP--2.8-blue.svg)](LICENSE)
@@ -188,9 +189,44 @@ native-loading policy explicitly rejects (see `NativeLibrary`'s own doc).
 structural — just not yet justified by the benchmarking this project holds
 every hot-path binding to.
 
-## Build from source
+## Install
 
-Not yet published — build and install locally:
+Available on Maven Central. Depend on `lmdb` plus the `lmdb-native-<classifier>`
+for your platform, or `lmdb-platform`, which bundles every classifier
+currently shipped, for a zero-choice dependency:
+
+```xml
+<dependency>
+  <groupId>io.github.dfa1.lmdb</groupId>
+  <artifactId>lmdb-platform</artifactId>
+  <version>0.1</version>
+</dependency>
+```
+
+Or, for a known single target, `lmdb` plus exactly one native classifier
+(`osx-aarch64`, `osx-x86_64`, `linux-x86_64`, `linux-aarch64`,
+`windows-x86_64`, `windows-aarch64`):
+
+```xml
+<dependency>
+  <groupId>io.github.dfa1.lmdb</groupId>
+  <artifactId>lmdb</artifactId>
+  <version>0.1</version>
+</dependency>
+<dependency>
+  <groupId>io.github.dfa1.lmdb</groupId>
+  <artifactId>lmdb-native-osx-aarch64</artifactId>
+  <version>0.1</version>
+  <scope>runtime</scope>
+</dependency>
+```
+
+A [BOM](bom) (`io.github.dfa1.lmdb:lmdb-bom`) is also published, for pinning
+every module's version in one place via `<dependencyManagement>`.
+
+Requires JDK 25+ and `--enable-native-access=ALL-UNNAMED` at runtime.
+
+### Build from source
 
 ```shell
 git clone --recurse-submodules https://github.com/dfa1/lmdb-ffm.git
@@ -198,18 +234,8 @@ cd lmdb-ffm
 ./mvnw install
 ```
 
-Requires JDK 25+ and [Zig](https://ziglang.org) 0.16+ on `PATH`. Then depend
-on the `lmdb` artifact plus the `lmdb-native-<classifier>` for your platform
-(or `lmdb-platform`, which bundles every classifier currently shipped, for a
-zero-choice dependency):
-
-```xml
-<dependency>
-  <groupId>io.github.dfa1.lmdb</groupId>
-  <artifactId>lmdb-platform</artifactId>
-  <version>0.1-SNAPSHOT</version>
-</dependency>
-```
+Also requires [Zig](https://ziglang.org) 0.16+ on `PATH`, to cross-compile
+`liblmdb` for every native classifier — see [CLAUDE.md](CLAUDE.md).
 
 ## License
 
