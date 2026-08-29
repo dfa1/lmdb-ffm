@@ -17,10 +17,16 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 /// filesystem path.
 ///
 /// Configuration ([#mapSize(LmdbByteSize)], [#maxDatabases(int)],
-/// [#maxReaders(int)]) must happen before [#open(Path, Set, int)]; LMDB
-/// rejects changing them on an open environment. Not thread-safe to configure
-/// or open concurrently, but the resulting environment (via its transactions)
-/// is safe to share across threads.
+/// [#maxReaders(int)], [#pageSize(LmdbByteSize)]) must happen before
+/// [#open(Path, Set, int)] — enforced here with [IllegalStateException],
+/// since LMDB's own C API does not reject the call itself. `mapSize` in
+/// particular is dangerous to allow post-open: `mdb_env_set_mapsize` remaps
+/// the mapping live and only guards against a concurrent *write*
+/// transaction, so calling it while a *read* transaction is open can
+/// invalidate every zero-copy view that transaction is holding out from
+/// under it. Not thread-safe to configure or open concurrently, but the
+/// resulting environment (via its transactions) is safe to share across
+/// threads.
 ///
 /// {@snippet :
 /// try (LmdbEnv env = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dbPath, EnumSet.of(LmdbEnvFlag.NOSUBDIR))) {
@@ -68,8 +74,26 @@ public final class LmdbEnv extends NativeObject {
     // to not free the mapping yet.
     private final AtomicInteger openTransactions = new AtomicInteger();
 
+    // Set true by #open, checked by #mapSize/#maxDatabases/#maxReaders/
+    // #pageSize: each is documented before-open only, and LMDB itself does
+    // not enforce that — mdb_env_set_mapsize in particular accepts a call
+    // against an already-open environment and remaps live, which invalidates
+    // every zero-copy view a still-open *read* transaction is holding
+    // (mdb_env_set_mapsize only guards against a live write transaction, not
+    // a read one). Whether that faults depends on whether the OS could
+    // extend the mapping in place, so left unchecked this was a heisenbug
+    // rather than a deterministic failure — dfa1/lmdb-ffm#7.
+    private boolean opened;
+
     private LmdbEnv(MemorySegment ptr) {
         super(ptr);
+    }
+
+    private void requireNotOpened(String setter) {
+        if (opened) {
+            throw new IllegalStateException(
+                    setter + "() must be called before open(Path, Set, int); this environment is already open");
+        }
     }
 
     /// Creates a new environment handle. It must still be configured and
@@ -96,9 +120,11 @@ public final class LmdbEnv extends NativeObject {
     ///
     /// @param bytes the map size
     /// @return `this`, for chaining
-    /// @throws LmdbException if the native call fails
+    /// @throws LmdbException        if the native call fails
+    /// @throws IllegalStateException if this environment is already open
     public LmdbEnv mapSize(LmdbByteSize bytes) {
         Objects.requireNonNull(bytes, "bytes");
+        requireNotOpened("mapSize");
         int code;
         try {
             code = (int) Bindings.ENV_SET_MAPSIZE.invokeExact(ptr(), bytes.bytes());
@@ -115,8 +141,10 @@ public final class LmdbEnv extends NativeObject {
     ///
     /// @param count the maximum number of named databases
     /// @return `this`, for chaining
-    /// @throws LmdbException if the native call fails
+    /// @throws LmdbException        if the native call fails
+    /// @throws IllegalStateException if this environment is already open
     public LmdbEnv maxDatabases(int count) {
+        requireNotOpened("maxDatabases");
         int code;
         try {
             code = (int) Bindings.ENV_SET_MAXDBS.invokeExact(ptr(), count);
@@ -132,8 +160,10 @@ public final class LmdbEnv extends NativeObject {
     ///
     /// @param count the maximum number of concurrent reader slots
     /// @return `this`, for chaining
-    /// @throws LmdbException if the native call fails
+    /// @throws LmdbException        if the native call fails
+    /// @throws IllegalStateException if this environment is already open
     public LmdbEnv maxReaders(int count) {
+        requireNotOpened("maxReaders");
         int code;
         try {
             code = (int) Bindings.ENV_SET_MAXREADERS.invokeExact(ptr(), count);
@@ -174,8 +204,10 @@ public final class LmdbEnv extends NativeObject {
     /// @throws LmdbException      if the native call fails
     /// @throws ArithmeticException if `bytes` exceeds `Integer.MAX_VALUE`
     ///                             (`mdb_env_set_pagesize` takes a native `int`)
+    /// @throws IllegalStateException if this environment is already open
     public LmdbEnv pageSize(LmdbByteSize bytes) {
         Objects.requireNonNull(bytes, "bytes");
+        requireNotOpened("pageSize");
         int code;
         try {
             code = (int) Bindings.ENV_SET_PAGESIZE.invokeExact(ptr(), bytes.toIntBytes());
@@ -222,6 +254,7 @@ public final class LmdbEnv extends NativeObject {
             }
             NativeCall.check(code);
         }
+        opened = true;
         return this;
     }
 

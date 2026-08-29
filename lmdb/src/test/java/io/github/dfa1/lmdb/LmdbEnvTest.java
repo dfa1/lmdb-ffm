@@ -132,6 +132,64 @@ class LmdbEnvTest {
     }
 
     @Nested
+    class Configuration {
+
+        @Test
+        void mapSizeAfterOpenFailsInsteadOfRemappingLive(@TempDir Path dir) {
+            // Given an already-open environment
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
+
+                // When mapSize is called again after open
+                ThrowingCallable result = () -> sut.mapSize(LmdbByteSize.ofMB(20));
+
+                // Then it fails fast instead of remapping under any live read
+                // transactions (dfa1/lmdb-ffm#7) — LMDB's own
+                // mdb_env_set_mapsize does not reject this call itself
+                assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+            }
+        }
+
+        @Test
+        void maxDatabasesAfterOpenFails(@TempDir Path dir) {
+            // Given an already-open environment
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
+
+                // When maxDatabases is called again after open
+                ThrowingCallable result = () -> sut.maxDatabases(8);
+
+                // Then it fails fast
+                assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+            }
+        }
+
+        @Test
+        void maxReadersAfterOpenFails(@TempDir Path dir) {
+            // Given an already-open environment
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
+
+                // When maxReaders is called again after open
+                ThrowingCallable result = () -> sut.maxReaders(8);
+
+                // Then it fails fast
+                assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+            }
+        }
+
+        @Test
+        void pageSizeAfterOpenFails(@TempDir Path dir) {
+            // Given an already-open environment
+            try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
+
+                // When pageSize is called again after open
+                ThrowingCallable result = () -> sut.pageSize(LmdbByteSize.ofBytes(4096));
+
+                // Then it fails fast
+                assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+            }
+        }
+    }
+
+    @Nested
     class Introspection {
 
         @Test
