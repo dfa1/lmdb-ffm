@@ -368,6 +368,30 @@ class LmdbTxnTest {
                         .hasMessageContaining("native");
             }
         }
+
+        @Test
+        void putRejectsAKeySegmentFromAClosedArena() {
+            // Given a native key segment whose owning arena has since closed
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+            Arena scratch = Arena.ofConfined();
+            MemorySegment closedKey = scratch.allocateFrom("k", StandardCharsets.UTF_8);
+            scratch.close();
+
+            // When put with it as the key
+            try (LmdbTxn txn = env.beginTxn(); Arena arena = Arena.ofConfined()) {
+                ThrowingCallable result = () -> txn.put(dbi, closedKey, nativeBytes(arena, "v"), Set.of());
+
+                // Then it fails fast naming the problem, not by silently
+                // copying a stale address into the stored entry
+                assertThatThrownBy(result)
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageContaining("closed");
+            }
+        }
     }
 
     @Nested

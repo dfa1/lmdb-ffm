@@ -39,9 +39,12 @@ final class NativeCall {
 
     /// Guards a zero-copy entry point: the segment handed to LMDB must be
     /// backed by native (off-heap) memory, since its address is dereferenced
-    /// in C. Fails fast with a clear message instead of the FFM linker's
-    /// cryptic error (or worse, a crash) from trying to derive a native
-    /// address from heap-backed memory.
+    /// in C, and its scope must still be alive. Fails fast with a clear
+    /// message instead of the FFM linker's cryptic error (or worse, a crash)
+    /// from trying to derive a native address from heap-backed memory, or a
+    /// silent use-after-free from copying a closed arena's address into an
+    /// `MDB_val`: storing that address (as opposed to dereferencing the
+    /// segment directly) is not an access FFM itself would ever object to.
     ///
     /// @param seg  the segment to check
     /// @param name the parameter name, for the exception message
@@ -50,6 +53,9 @@ final class NativeCall {
         if (!seg.isNative()) {
             throw new IllegalArgumentException(
                     name + " must be a native (off-heap) MemorySegment; got a heap segment");
+        }
+        if (!seg.scope().isAlive()) {
+            throw new IllegalStateException(name + " belongs to a closed Arena and is no longer valid");
         }
     }
 
