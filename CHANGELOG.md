@@ -6,6 +6,8 @@ git tags, which trigger publication to Maven Central.
 
 ## [Unreleased]
 
+## [0.2] - 2026-08-29
+
 ### Added
 
 - `LmdbByteSize` domain primitive for map/page sizes.
