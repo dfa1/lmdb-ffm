@@ -896,39 +896,41 @@ class LmdbTxnTest {
         @Test
         void setComparatorRejectsANullDbi() {
             // Given a transaction
-            LmdbTxn sut = env.beginTxn();
+            try (LmdbTxn sut = env.beginTxn()) {
+                // When installing a comparator on a null dbi
+                ThrowingCallable result = () -> sut.setComparator(null, reverseByteComparator());
 
-            // When installing a comparator on a null dbi
-            ThrowingCallable result = () -> sut.setComparator(null, reverseByteComparator());
-
-            // Then it fails fast
-            assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+                // Then it fails fast
+                assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+            }
         }
 
         @Test
         void setComparatorRejectsANullComparator() {
             // Given an open database
-            LmdbTxn sut = env.beginTxn();
-            LmdbDbi dbi = sut.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+            try (LmdbTxn sut = env.beginTxn()) {
+                LmdbDbi dbi = sut.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
 
-            // When installing a null comparator
-            ThrowingCallable result = () -> sut.setComparator(dbi, null);
+                // When installing a null comparator
+                ThrowingCallable result = () -> sut.setComparator(dbi, null);
 
-            // Then it fails fast
-            assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+                // Then it fails fast
+                assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+            }
         }
 
         @Test
         void setDupComparatorRejectsANullComparator() {
             // Given an open DUPSORT database
-            LmdbTxn sut = env.beginTxn();
-            LmdbDbi dbi = sut.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+            try (LmdbTxn sut = env.beginTxn()) {
+                LmdbDbi dbi = sut.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
 
-            // When installing a null dup comparator
-            ThrowingCallable result = () -> sut.setDupComparator(dbi, null);
+                // When installing a null dup comparator
+                ThrowingCallable result = () -> sut.setDupComparator(dbi, null);
 
-            // Then it fails fast
-            assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+                // Then it fails fast
+                assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+            }
         }
 
         @Test
@@ -1038,25 +1040,25 @@ class LmdbTxnTest {
         @Test
         void compareRejectsANullDbi() {
             // Given a transaction
-            LmdbTxn sut = env.beginTxn();
+            try (LmdbTxn sut = env.beginTxn()) {
+                // When comparing with a null dbi
+                ThrowingCallable result = () -> sut.compare(null, key("a"), key("b"));
 
-            // When comparing with a null dbi
-            ThrowingCallable result = () -> sut.compare(null, key("a"), key("b"));
-
-            // Then it fails fast
-            assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+                // Then it fails fast
+                assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+            }
         }
 
         @Test
         void compareDataRejectsANullDbi() {
             // Given a transaction
-            LmdbTxn sut = env.beginTxn();
+            try (LmdbTxn sut = env.beginTxn()) {
+                // When comparing data with a null dbi
+                ThrowingCallable result = () -> sut.compareData(null, value("1"), value("2"));
 
-            // When comparing data with a null dbi
-            ThrowingCallable result = () -> sut.compareData(null, value("1"), value("2"));
-
-            // Then it fails fast
-            assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+                // Then it fails fast
+                assertThatThrownBy(result).isInstanceOf(NullPointerException.class);
+            }
         }
     }
 

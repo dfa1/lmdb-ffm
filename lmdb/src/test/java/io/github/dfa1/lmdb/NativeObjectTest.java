@@ -96,6 +96,22 @@ class NativeObjectTest {
         }
 
         @Test
+        void closeLetsLmdbContractExceptionEscape() {
+            // Given an object whose tryClose detects a contract violation
+            TestObject sut = new TestObject(POINTER);
+            sut.failWithContractViolationOnClose = true;
+
+            // When closed
+            ThrowingCallable result = sut::close;
+
+            // Then, unlike every other Throwable, this one is not swallowed
+            assertThatThrownBy(result).isInstanceOf(LmdbContractException.class);
+            // And it is still considered closed
+            assertThat(sut.closeCount.get()).isEqualTo(1);
+            assertThatThrownBy(sut::pointer).isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
         void constructingWithNullNeverCallsTryClose() {
             // Given an object that owns no pointer
             TestObject sut = new TestObject(MemorySegment.NULL);
@@ -214,6 +230,7 @@ class NativeObjectTest {
         private final AtomicInteger closeCount = new AtomicInteger();
         private volatile MemorySegment closedWith;
         private volatile boolean failOnClose;
+        private volatile boolean failWithContractViolationOnClose;
 
         private TestObject(MemorySegment owningPointer) {
             super(owningPointer);
@@ -227,6 +244,9 @@ class NativeObjectTest {
         protected void tryClose(MemorySegment ptr) {
             closeCount.incrementAndGet();
             closedWith = ptr;
+            if (failWithContractViolationOnClose) {
+                throw new LmdbContractException("contract violation");
+            }
             if (failOnClose) {
                 throw new RuntimeException("native free failed");
             }

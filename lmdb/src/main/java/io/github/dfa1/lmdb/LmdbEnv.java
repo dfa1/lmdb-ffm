@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_INT;
@@ -52,6 +53,20 @@ public final class LmdbEnv extends NativeObject {
     // `false` read there would take the critical branch into an upcall and
     // abort the VM.
     private volatile boolean usesComparators;
+
+    // Counts LmdbTxn instances currently open against this environment:
+    // incremented once a transaction is fully constructed, decremented by
+    // exactly one of LmdbTxn#commit/#abort/#tryClose (never more than one —
+    // see LmdbTxn's own field comment). Read by #tryClose, which refuses to
+    // call mdb_env_close while this is nonzero, throwing LmdbContractException
+    // instead. LMDB's own docs require every transaction to be ended first;
+    // closing anyway unmaps memory that a still-open transaction (or a cursor
+    // opened on it) may hold a zero-copy view into, so the *next* use of it
+    // dereferences freed memory instead of failing cleanly (SIGSEGV in
+    // mdb_page_search_root, dfa1/lmdb-ffm#6) — this binding cannot intercept
+    // that later call to turn it into an exception, so the only safe move is
+    // to not free the mapping yet.
+    private final AtomicInteger openTransactions = new AtomicInteger();
 
     private LmdbEnv(MemorySegment ptr) {
         super(ptr);
@@ -572,8 +587,46 @@ public final class LmdbEnv extends NativeObject {
         return usesComparators;
     }
 
+    /// Registers a transaction as open against this environment — called
+    /// once a new [LmdbTxn] is fully constructed. See #openTransactions.
+    void registerTransaction() {
+        openTransactions.incrementAndGet();
+    }
+
+    /// Unregisters a transaction that just ended, however it ended — called
+    /// from exactly one of [LmdbTxn#commit()], [LmdbTxn#abort()], or its
+    /// `tryClose`. See #openTransactions.
+    void unregisterTransaction() {
+        openTransactions.decrementAndGet();
+    }
+
     @Override
     protected void tryClose(MemorySegment ptr) throws Throwable {
+        int open = openTransactions.get();
+        if (open != 0) {
+            // Do not call mdb_env_close: see #openTransactions for why that
+            // would be unsafe here — a still-open transaction (or a cursor
+            // opened on it) may hold a zero-copy view into the mapping this
+            // would free. This object still considers itself closed from
+            // this point on (NativeObject#close already swapped its own
+            // pointer to NULL before calling this), so #beginTxn and every
+            // other method on it now fails fast with IllegalStateException —
+            // only the native mdb_env and the upcall-stub arena those `open`
+            // transactions may still touch are deliberately leaked, rather
+            // than freed out from under them.
+            //
+            // Thrown, not merely logged: NativeObject#close() lets
+            // LmdbContractException alone escape its usual "destructors must
+            // not throw" swallow specifically so a bug like this one — a
+            // caller's own resource management left `open` transactions
+            // dangling — cannot go unnoticed the way a background log line
+            // could.
+            throw new LmdbContractException(
+                    "LmdbEnv#close() called with " + open + " LmdbTxn still open; skipping "
+                            + "mdb_env_close and leaking the native environment to avoid a "
+                            + "use-after-free the next time one of them is used. Commit or abort "
+                            + "every transaction before closing its environment.");
+        }
         try {
             Bindings.ENV_CLOSE.invokeExact(ptr);
         } finally {
