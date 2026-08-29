@@ -68,6 +68,11 @@ public final class LmdbCursor extends NativeObject {
     // never reallocated per call once a caller's key sizes stabilize.
     private MemorySegment keyBuffer;
 
+    // Same as keyBuffer, for the byte[]-data get(LmdbCursorOp, byte[], byte[])
+    // overload's copied search data (GET_BOTH/GET_BOTH_RANGE only — see
+    // #requireKeyDataOp).
+    private MemorySegment dataBuffer;
+
     // mdb_cursor_dbi/mdb_cursor_txn are tracked here in Java instead of bound
     // as native calls: this cursor already knows both from #open, and #renew
     // is the only way either ever changes (dbi never does — see #renew's own
@@ -145,22 +150,30 @@ public final class LmdbCursor extends NativeObject {
     /// @param op the positioning operation
     /// @return the key/data pair at the new position, or `null` if there isn't one
     /// @throws LmdbException if the native call fails
+    /// @throws IllegalArgumentException if `op` is [LmdbCursorOp#GET_BOTH] or
+    ///                                   [LmdbCursorOp#GET_BOTH_RANGE]
     public Entry get(LmdbCursorOp op) {
         Objects.requireNonNull(op, "op");
+        requireNoDataOp(op);
         return cursorGet(op) ? new Entry(LmdbVal.data(keyVal, txn.arena()), LmdbVal.data(dataVal, txn.arena())) : null;
     }
 
     /// Positions this cursor per `op` (one that takes a key input, such as
-    /// [LmdbCursorOp#SET], [LmdbCursorOp#SET_RANGE] or [LmdbCursorOp#GET_BOTH])
-    /// and returns the entry found there.
+    /// [LmdbCursorOp#SET] or [LmdbCursorOp#SET_RANGE]) and returns the entry
+    /// found there. [LmdbCursorOp#GET_BOTH]/[LmdbCursorOp#GET_BOTH_RANGE]
+    /// search on a data value too, so this overload rejects them — use
+    /// [#get(LmdbCursorOp, byte[], byte[])] instead.
     ///
     /// @param op  the positioning operation
     /// @param key the key to search for
     /// @return the key/data pair at the new position, or `null` if there isn't one
     /// @throws LmdbException if the native call fails
+    /// @throws IllegalArgumentException if `op` is [LmdbCursorOp#GET_BOTH] or
+    ///                                   [LmdbCursorOp#GET_BOTH_RANGE]
     public Entry get(LmdbCursorOp op, byte[] key) {
         Objects.requireNonNull(op, "op");
         Objects.requireNonNull(key, "key");
+        requireNoDataOp(op);
         keyBuffer = LmdbVal.growBuffer(arena, keyBuffer, Math.max(key.length, 1));
         MemorySegment.copy(key, 0, keyBuffer, JAVA_BYTE, 0, key.length);
         LmdbVal.set(keyVal, keyBuffer.asSlice(0, key.length));
@@ -174,9 +187,12 @@ public final class LmdbCursor extends NativeObject {
     ///            `MDB_val`; not retained after this call)
     /// @return the key/data pair at the new position, or `null` if there isn't one
     /// @throws LmdbException if the native call fails
+    /// @throws IllegalArgumentException if `op` is [LmdbCursorOp#GET_BOTH] or
+    ///                                   [LmdbCursorOp#GET_BOTH_RANGE]
     public Entry get(LmdbCursorOp op, MemorySegment key) {
         Objects.requireNonNull(op, "op");
         NativeCall.requireNative(key, "key");
+        requireNoDataOp(op);
         LmdbVal.set(keyVal, key);
         return cursorGet(op) ? new Entry(LmdbVal.data(keyVal, txn.arena()), LmdbVal.data(dataVal, txn.arena())) : null;
     }
@@ -195,6 +211,70 @@ public final class LmdbCursor extends NativeObject {
         return get(op, MemorySegment.ofBuffer(key));
     }
 
+    /// Positions this cursor per `op` — [LmdbCursorOp#GET_BOTH] or
+    /// [LmdbCursorOp#GET_BOTH_RANGE], the only two `MDB_cursor_op` values
+    /// that search on a data value as well as a key — and returns the entry
+    /// found there.
+    ///
+    /// @param op   the positioning operation
+    /// @param key  the key to search for
+    /// @param data the data value to search for (for `GET_BOTH_RANGE`, the
+    ///             lower bound to search from)
+    /// @return the key/data pair at the new position, or `null` if there isn't one
+    /// @throws LmdbException if the native call fails
+    /// @throws IllegalArgumentException if `op` is neither [LmdbCursorOp#GET_BOTH]
+    ///                                   nor [LmdbCursorOp#GET_BOTH_RANGE]
+    public Entry get(LmdbCursorOp op, byte[] key, byte[] data) {
+        Objects.requireNonNull(op, "op");
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(data, "data");
+        requireKeyDataOp(op);
+        keyBuffer = LmdbVal.growBuffer(arena, keyBuffer, Math.max(key.length, 1));
+        MemorySegment.copy(key, 0, keyBuffer, JAVA_BYTE, 0, key.length);
+        LmdbVal.set(keyVal, keyBuffer.asSlice(0, key.length));
+        dataBuffer = LmdbVal.growBuffer(arena, dataBuffer, Math.max(data.length, 1));
+        MemorySegment.copy(data, 0, dataBuffer, JAVA_BYTE, 0, data.length);
+        LmdbVal.set(dataVal, dataBuffer.asSlice(0, data.length));
+        return cursorGet(op) ? new Entry(LmdbVal.data(keyVal, txn.arena()), LmdbVal.data(dataVal, txn.arena())) : null;
+    }
+
+    /// [#get(LmdbCursorOp, byte[], byte[])] with a zero-copy key and data.
+    ///
+    /// @param op   the positioning operation
+    /// @param key  native key bytes to search for (copied into a temporary
+    ///             `MDB_val`; not retained after this call)
+    /// @param data native data bytes to search for (likewise not retained)
+    /// @return the key/data pair at the new position, or `null` if there isn't one
+    /// @throws LmdbException if the native call fails
+    /// @throws IllegalArgumentException if `op` is neither [LmdbCursorOp#GET_BOTH]
+    ///                                   nor [LmdbCursorOp#GET_BOTH_RANGE]
+    public Entry get(LmdbCursorOp op, MemorySegment key, MemorySegment data) {
+        Objects.requireNonNull(op, "op");
+        NativeCall.requireNative(key, "key");
+        NativeCall.requireNative(data, "data");
+        requireKeyDataOp(op);
+        LmdbVal.set(keyVal, key);
+        LmdbVal.set(dataVal, data);
+        return cursorGet(op) ? new Entry(LmdbVal.data(keyVal, txn.arena()), LmdbVal.data(dataVal, txn.arena())) : null;
+    }
+
+    /// [#get(LmdbCursorOp, MemorySegment, MemorySegment)] for direct
+    /// [ByteBuffer] key/data — see [#get(LmdbCursorOp, ByteBuffer)] for the
+    /// key-range/heap-buffer caveats (both apply here too).
+    ///
+    /// @param op   the positioning operation
+    /// @param key  the key to search for, as a direct buffer's remaining content
+    /// @param data the data value to search for, as a direct buffer's remaining content
+    /// @return the key/data pair at the new position, or `null` if there isn't one
+    /// @throws LmdbException if the native call fails
+    /// @throws IllegalArgumentException if `op` is neither [LmdbCursorOp#GET_BOTH]
+    ///                                   nor [LmdbCursorOp#GET_BOTH_RANGE]
+    public Entry get(LmdbCursorOp op, ByteBuffer key, ByteBuffer data) {
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(data, "data");
+        return get(op, MemorySegment.ofBuffer(key), MemorySegment.ofBuffer(data));
+    }
+
     /// [#get(LmdbCursorOp)], without the key-segment construction that call
     /// pays even when the key is never touched — the shape a whole-database
     /// value-only scan (`FIRST`/`NEXT`/`LAST`/`PREV`) needs.
@@ -202,8 +282,11 @@ public final class LmdbCursor extends NativeObject {
     /// @param op the positioning operation
     /// @return the value at the new position, or `null` if there isn't one
     /// @throws LmdbException if the native call fails
+    /// @throws IllegalArgumentException if `op` is [LmdbCursorOp#GET_BOTH] or
+    ///                                   [LmdbCursorOp#GET_BOTH_RANGE]
     public MemorySegment getValue(LmdbCursorOp op) {
         Objects.requireNonNull(op, "op");
+        requireNoDataOp(op);
         return cursorGet(op) ? LmdbVal.data(dataVal, txn.arena()) : null;
     }
 
@@ -217,9 +300,12 @@ public final class LmdbCursor extends NativeObject {
     /// @param key the key to search for
     /// @return the value at the new position, or `null` if there isn't one
     /// @throws LmdbException if the native call fails
+    /// @throws IllegalArgumentException if `op` is [LmdbCursorOp#GET_BOTH] or
+    ///                                   [LmdbCursorOp#GET_BOTH_RANGE]
     public MemorySegment getValue(LmdbCursorOp op, byte[] key) {
         Objects.requireNonNull(op, "op");
         Objects.requireNonNull(key, "key");
+        requireNoDataOp(op);
         keyBuffer = LmdbVal.growBuffer(arena, keyBuffer, Math.max(key.length, 1));
         MemorySegment.copy(key, 0, keyBuffer, JAVA_BYTE, 0, key.length);
         LmdbVal.set(keyVal, keyBuffer.asSlice(0, key.length));
@@ -233,9 +319,12 @@ public final class LmdbCursor extends NativeObject {
     ///            `MDB_val`; not retained after this call)
     /// @return the value at the new position, or `null` if there isn't one
     /// @throws LmdbException if the native call fails
+    /// @throws IllegalArgumentException if `op` is [LmdbCursorOp#GET_BOTH] or
+    ///                                   [LmdbCursorOp#GET_BOTH_RANGE]
     public MemorySegment getValue(LmdbCursorOp op, MemorySegment key) {
         Objects.requireNonNull(op, "op");
         NativeCall.requireNative(key, "key");
+        requireNoDataOp(op);
         LmdbVal.set(keyVal, key);
         return cursorGet(op) ? LmdbVal.data(dataVal, txn.arena()) : null;
     }
@@ -374,6 +463,31 @@ public final class LmdbCursor extends NativeObject {
             throw NativeCall.rethrow(t);
         }
         return result != 0;
+    }
+
+    // Guards the key-only get/getValue overloads against GET_BOTH/
+    // GET_BOTH_RANGE: both need a data value to search on, which those
+    // overloads never set, so the native call would search against whatever
+    // this cursor's reused dataVal slot last held from an unrelated earlier
+    // call — a plausible-looking but wrong result, not an error (see
+    // #requireKeyDataOp, and dfa1/lmdb-ffm#12).
+    private static void requireNoDataOp(LmdbCursorOp op) {
+        if (op == LmdbCursorOp.GET_BOTH || op == LmdbCursorOp.GET_BOTH_RANGE) {
+            throw new IllegalArgumentException(op + " needs a data value to search on, not just a key; "
+                    + "use get(LmdbCursorOp, byte[], byte[]) (or its MemorySegment/ByteBuffer siblings) instead");
+        }
+    }
+
+    // Guards the key+data get overloads the other way: GET_BOTH/
+    // GET_BOTH_RANGE are the only two MDB_cursor_op values that take a data
+    // input, so any other op here would silently ignore the caller's data
+    // argument instead of doing what its name suggests.
+    private static void requireKeyDataOp(LmdbCursorOp op) {
+        if (op != LmdbCursorOp.GET_BOTH && op != LmdbCursorOp.GET_BOTH_RANGE) {
+            throw new IllegalArgumentException(op + " does not search on a data value; only GET_BOTH and "
+                    + "GET_BOTH_RANGE do. Use get(LmdbCursorOp, byte[]) (or its MemorySegment/ByteBuffer "
+                    + "siblings) instead.");
+        }
     }
 
     // The one place mdb_cursor_get is called: every #get/#getValue overload

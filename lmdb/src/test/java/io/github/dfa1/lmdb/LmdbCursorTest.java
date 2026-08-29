@@ -451,6 +451,187 @@ class LmdbCursorTest {
     }
 
     @Nested
+    class KeyDataSearch {
+
+        @Test
+        void getBothFindsTheExactDuplicateAskedFor() {
+            // Given a DUPSORT database with two data values under the same key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.put(dbi, bytes("k"), bytes("aaa"), Set.of());
+                txn.put(dbi, bytes("k"), bytes("bbb"), Set.of());
+                txn.commit();
+            }
+
+            // When GET_BOTH searches for the second duplicate specifically,
+            // as the very first call on a freshly opened cursor — no earlier
+            // call could have left a stale dataVal slot to accidentally match
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                LmdbCursor.Entry entry = cursor.get(LmdbCursorOp.GET_BOTH, bytes("k"), bytes("bbb"));
+
+                // Then it finds exactly that pair, not whatever was left over
+                // from an unrelated earlier call (dfa1/lmdb-ffm#12)
+                assertThat(entry).isNotNull();
+                assertThat(entry.key().toArray(JAVA_BYTE)).isEqualTo(bytes("k"));
+                assertThat(entry.data().toArray(JAVA_BYTE)).isEqualTo(bytes("bbb"));
+            }
+        }
+
+        @Test
+        void getBothReturnsNullWhenTheExactPairIsNotPresent() {
+            // Given a DUPSORT database with one data value under a key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.put(dbi, bytes("k"), bytes("aaa"), Set.of());
+                txn.commit();
+            }
+
+            // When GET_BOTH searches for a data value that was never stored
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                LmdbCursor.Entry entry = cursor.get(LmdbCursorOp.GET_BOTH, bytes("k"), bytes("zzz"));
+
+                // Then it reports absent rather than a false match
+                assertThat(entry).isNull();
+            }
+        }
+
+        @Test
+        void getBothRangeFindsTheNearestDuplicateAtOrAfterTheGivenData() {
+            // Given a DUPSORT database with duplicates "aaa" and "ccc" under one key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.put(dbi, bytes("k"), bytes("aaa"), Set.of());
+                txn.put(dbi, bytes("k"), bytes("ccc"), Set.of());
+                txn.commit();
+            }
+
+            // When GET_BOTH_RANGE searches from "bbb", which sorts between them
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                LmdbCursor.Entry entry = cursor.get(LmdbCursorOp.GET_BOTH_RANGE, bytes("k"), bytes("bbb"));
+
+                // Then it lands on the next duplicate at or after "bbb"
+                assertThat(entry).isNotNull();
+                assertThat(entry.data().toArray(JAVA_BYTE)).isEqualTo(bytes("ccc"));
+            }
+        }
+
+        @Test
+        void getBothOnAKeyOnlyOverloadIsRejected() {
+            // Given a DUPSORT database with an entry
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.put(dbi, bytes("k"), bytes("aaa"), Set.of());
+                txn.commit();
+            }
+
+            // When GET_BOTH is called through the key-only overload
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                ThrowingCallable result = () -> cursor.get(LmdbCursorOp.GET_BOTH, bytes("k"));
+
+                // Then it is rejected rather than silently searching against
+                // whatever this cursor's reused data slot last held
+                // (dfa1/lmdb-ffm#12)
+                assertThatThrownBy(result).isInstanceOf(IllegalArgumentException.class);
+            }
+        }
+
+        @Test
+        void getBothOnGetValueKeyOnlyOverloadIsRejected() {
+            // Given a DUPSORT database with an entry
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.put(dbi, bytes("k"), bytes("aaa"), Set.of());
+                txn.commit();
+            }
+
+            // When GET_BOTH is called through the key-only getValue overload
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                ThrowingCallable result = () -> cursor.getValue(LmdbCursorOp.GET_BOTH, bytes("k"));
+
+                // Then it is rejected the same way
+                assertThatThrownBy(result).isInstanceOf(IllegalArgumentException.class);
+            }
+        }
+
+        @Test
+        void aNonKeyDataOpThroughTheKeyDataOverloadIsRejected() {
+            // Given an open database
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, bytes("k"), bytes("v"), Set.of());
+                txn.commit();
+            }
+
+            // When SET (which doesn't search on a data value) is called
+            // through the new key+data overload
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                ThrowingCallable result = () -> cursor.get(LmdbCursorOp.SET, bytes("k"), bytes("ignored"));
+
+                // Then it is rejected rather than silently ignoring the data argument
+                assertThatThrownBy(result).isInstanceOf(IllegalArgumentException.class);
+            }
+        }
+
+        @Test
+        void getBothAcceptsNativeKeyAndDataSegments() {
+            // Given a DUPSORT database with two data values under the same key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.put(dbi, bytes("k"), bytes("aaa"), Set.of());
+                txn.put(dbi, bytes("k"), bytes("bbb"), Set.of());
+                txn.commit();
+            }
+
+            // When GET_BOTH searches via native key/data segments
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi);
+                    Arena arena = Arena.ofConfined()) {
+                LmdbCursor.Entry entry =
+                        cursor.get(LmdbCursorOp.GET_BOTH, nativeBytes(arena, "k"), nativeBytes(arena, "bbb"));
+
+                // Then it finds the exact pair
+                assertThat(entry).isNotNull();
+                assertThat(entry.data().toArray(JAVA_BYTE)).isEqualTo(bytes("bbb"));
+            }
+        }
+
+        @Test
+        void getBothAcceptsDirectByteBufferKeyAndData() {
+            // Given a DUPSORT database with two data values under the same key
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.put(dbi, bytes("k"), bytes("aaa"), Set.of());
+                txn.put(dbi, bytes("k"), bytes("bbb"), Set.of());
+                txn.commit();
+            }
+
+            // When GET_BOTH searches via direct ByteBuffer key/data
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                LmdbCursor.Entry entry = cursor.get(LmdbCursorOp.GET_BOTH, directBuffer("k"), directBuffer("bbb"));
+
+                // Then it finds the exact pair
+                assertThat(entry).isNotNull();
+                assertThat(entry.data().toArray(JAVA_BYTE)).isEqualTo(bytes("bbb"));
+            }
+        }
+    }
+
+    @Nested
     class Introspection {
 
         @Test
