@@ -49,6 +49,7 @@ public final class LmdbTxn extends NativeObject {
     private LmdbTxn(MemorySegment ptr, LmdbEnv env) {
         super(ptr);
         this.env = env;
+        env.registerTransaction();
     }
 
     static LmdbTxn begin(LmdbEnv env, LmdbTxn parent, int flags) {
@@ -106,6 +107,7 @@ public final class LmdbTxn extends NativeObject {
             }
             NativeCall.check(code);
         } finally {
+            env.unregisterTransaction();
             arena.close();
         }
     }
@@ -124,6 +126,7 @@ public final class LmdbTxn extends NativeObject {
                 throw NativeCall.rethrow(t);
             }
         } finally {
+            env.unregisterTransaction();
             arena.close();
         }
     }
@@ -827,6 +830,7 @@ public final class LmdbTxn extends NativeObject {
         try {
             Bindings.TXN_ABORT.invokeExact(ptr);
         } finally {
+            env.unregisterTransaction();
             arena.close();
         }
     }

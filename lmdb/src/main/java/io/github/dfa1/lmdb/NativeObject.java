@@ -37,6 +37,13 @@ public abstract class NativeObject implements AutoCloseable {
         if (!MemorySegment.NULL.equals(p)) {
             try {
                 tryClose(p);
+            } catch (LmdbContractException e) {
+                // The one Throwable this deliberately does not swallow: a
+                // detected violation of this binding's own resource-lifetime
+                // contract, not an ordinary native-call failure — see
+                // LmdbContractException's own doc for why "destructors must
+                // not throw" does not extend to it.
+                throw e;
             } catch (Throwable _) {
                 // destructors must not throw
             }
@@ -63,7 +70,9 @@ public abstract class NativeObject implements AutoCloseable {
     /// Releases the native resource. Called exactly once with a non-NULL pointer.
     ///
     /// @param ptr the non-NULL native pointer to free
-    /// @throws Throwable if the native free call fails; the exception is swallowed by [#close()]
+    /// @throws Throwable if the native free call fails; the exception is
+    ///                    swallowed by [#close()] — except [LmdbContractException],
+    ///                    which [#close()] lets escape instead
     @SuppressWarnings("java:S112") // implementations wrap MethodHandle.invokeExact, declared to throw Throwable
     protected abstract void tryClose(MemorySegment ptr) throws Throwable;
 }

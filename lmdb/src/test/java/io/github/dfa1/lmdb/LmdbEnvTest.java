@@ -3,6 +3,7 @@ package io.github.dfa1.lmdb;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.CleanupMode;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
@@ -56,6 +57,77 @@ class LmdbEnvTest {
 
             // Then it fails fast rather than crashing the JVM
             assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void closingWithAnOpenReadTransactionThrowsButLeavesItUsable(@TempDir(cleanup = CleanupMode.NEVER) Path dir) {
+            // Given an environment with data, and a read-only transaction still open
+            LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of());
+            LmdbDbi dbi;
+            try (LmdbTxn setup = sut.beginTxn()) {
+                dbi = setup.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                setup.put(dbi, "k".getBytes(), "v".getBytes(), Set.of());
+                setup.commit();
+            }
+            LmdbTxn txn = sut.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+
+            // When the environment is closed without ending that transaction
+            ThrowingCallable closeIt = sut::close;
+
+            // Then close() reports the contract violation loudly, rather than
+            // silently leaking or (dfa1/lmdb-ffm#6) crashing on the next use
+            // of the still-open transaction
+            assertThatThrownBy(closeIt)
+                    .isInstanceOf(LmdbContractException.class)
+                    .hasMessageContaining("1")
+                    .hasMessageContaining("LmdbTxn");
+
+            // And the environment now considers itself closed
+            assertThatThrownBy(sut::beginTxn).isInstanceOf(IllegalStateException.class);
+
+            // And, critically, the transaction that was still open keeps working —
+            // the native environment was deliberately left mapped rather than freed
+            // out from under it
+            assertThat(txn.get(dbi, "k".getBytes())).isEqualTo("v".getBytes());
+            txn.abort();
+        }
+
+        @Test
+        void closingWithAnOpenWriteTransactionThrowsButLeavesItUsable(@TempDir(cleanup = CleanupMode.NEVER) Path dir) {
+            // Given an environment with a write transaction still open
+            LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of());
+            LmdbTxn txn = sut.beginTxn();
+            LmdbDbi dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+
+            // When the environment is closed without ending that transaction
+            ThrowingCallable closeIt = sut::close;
+
+            // Then close() reports the contract violation loudly
+            assertThatThrownBy(closeIt).isInstanceOf(LmdbContractException.class);
+
+            // And the write transaction can still commit its data rather than
+            // touching memory the close already freed
+            ThrowingCallable commitIt = () -> {
+                txn.put(dbi, "k".getBytes(), "v".getBytes(), Set.of());
+                txn.commit();
+            };
+            assertThatCode(commitIt).doesNotThrowAnyException();
+        }
+
+        @Test
+        void closingAfterEveryTransactionEndedNeedsNoSpecialHandling(@TempDir Path dir) {
+            // Given an environment whose only transaction already committed
+            LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of());
+            try (LmdbTxn txn = sut.beginTxn()) {
+                txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+
+            // When the environment is closed
+            ThrowingCallable closeIt = sut::close;
+
+            // Then it closes cleanly, exactly as when no transaction was ever opened
+            assertThatCode(closeIt).doesNotThrowAnyException();
         }
     }
 
