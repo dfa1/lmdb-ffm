@@ -23,18 +23,24 @@ import static java.lang.foreign.ValueLayout.JAVA_INT;
 /// simply discarded (never committed) is the normal way to release its
 /// snapshot; a write transaction must be [#commit()]ted to keep its changes.
 ///
-/// Not thread-safe, and confined to the thread that began it — LMDB's own
-/// docs describe [LmdbEnvFlag#NOTLS] as lifting that confinement for a
-/// read-only transaction, letting it migrate between threads, but this
-/// binding does not offer that: the reused `MDB_val` out-param slots
-/// ([#keyVal]/[#dataVal]) live in an `Arena.ofConfined()` tied to whichever
-/// thread began this transaction, so every read still throws
-/// `WrongThreadException` from any other thread regardless of `NOTLS` — see
-/// that flag's own doc, and dfa1/lmdb-ffm#10. [#put(LmdbDbi, byte[], byte[],
-/// Set)] and the rest of the write path enforce the identical confinement
-/// explicitly (`IllegalStateException`, not a JDK-internal exception type),
-/// for both a write transaction (where LMDB itself gives no such
-/// confinement automatically) and a read one alike.
+/// **Confined to the thread that began it — use it from no other thread.**
+/// This is a hard requirement inherited from LMDB itself (`mdb_txn_begin`'s
+/// own doc: "A transaction and its cursors must only be used by a single
+/// thread"), not a convenience default; violating it is undefined behavior,
+/// not a checked error. [LmdbEnvFlag#NOTLS] lifts this in upstream LMDB for
+/// a read-only transaction, letting it migrate between threads, but this
+/// binding does not offer that either way: the reused `MDB_val` out-param
+/// slots ([#keyVal]/[#dataVal]) live in an `Arena.ofConfined()` tied to
+/// whichever thread began this transaction, so a cross-thread *read*
+/// happens to throw `WrongThreadException` regardless of `NOTLS` — see that
+/// flag's own doc. A cross-thread *write*, or any other method, has no such
+/// incidental guard and is not otherwise checked: nothing stops it from
+/// running, and per LMDB's own contract the result is undefined, up to and
+/// including native memory corruption. Enforcing this everywhere it could
+/// apply would mean auditing and guarding every native call this class (and
+/// [LmdbCursor]) makes, which does not end — so this is deliberately left
+/// as a documented contract like the rest of Java's own non-thread-safe
+/// collections, not a partially-enforced one.
 ///
 /// {@snippet :
 /// try (LmdbTxn txn = env.beginTxn()) {
@@ -78,35 +84,11 @@ public final class LmdbTxn extends NativeObject {
     // documented not-thread-safe.
     private final Set<LmdbCursor> openCursors = new HashSet<>();
 
-    // The thread that began this transaction. LMDB confines a transaction to
-    // one thread (NOTLS only lifts this for a *read-only* transaction's
-    // reader-slot lookup, never for a write), and the read path already
-    // enforces that incidentally: keyVal/dataVal live in a confined arena, so
-    // a cross-thread getSegment/get throws WrongThreadException before
-    // reaching C. The write path has no such incidental guard — its per-call
-    // MDB_val lives in a fresh Arena.ofConfined() opened on whichever thread
-    // calls put/delete, so nothing stopped it sailing through to native
-    // memory corruption instead of failing the same way. #requireOwnerThread
-    // gives put/delete the same explicit, deliberate check. See
-    // dfa1/lmdb-ffm#8.
-    private final Thread ownerThread = Thread.currentThread();
-
     private LmdbTxn(MemorySegment ptr, LmdbEnv env, boolean readOnly) {
         super(ptr);
         this.env = env;
         this.readOnly = readOnly;
         env.registerTransaction();
-    }
-
-    // Guards the write path (put/delete) against being called from a thread
-    // other than the one that began this transaction — see #ownerThread.
-    private void requireOwnerThread() {
-        Thread current = Thread.currentThread();
-        if (current != ownerThread) {
-            throw new IllegalStateException(
-                    "LmdbTxn is confined to the thread that began it (" + ownerThread.getName()
-                            + "); called from " + current.getName() + " instead");
-        }
     }
 
     static LmdbTxn begin(LmdbEnv env, LmdbTxn parent, int flags) {
@@ -690,8 +672,6 @@ public final class LmdbTxn extends NativeObject {
     ///              `EnumSet.of(LmdbWriteFlag.NOOVERWRITE)`
     /// @throws LmdbException if the write fails (e.g. [LmdbErrorCode#KEY_EXIST]
     ///                       with [LmdbWriteFlag#NOOVERWRITE])
-    /// @throws IllegalStateException if called from a thread other than the
-    ///                                one that began this transaction
     /// @throws IllegalArgumentException if `flags` contains [LmdbWriteFlag#RESERVE]
     public void put(LmdbDbi dbi, byte[] key, byte[] data, Set<LmdbWriteFlag> flags) {
         Objects.requireNonNull(dbi, "dbi");
@@ -699,7 +679,6 @@ public final class LmdbTxn extends NativeObject {
         Objects.requireNonNull(data, "data");
         Objects.requireNonNull(flags, "flags");
         LmdbWriteFlag.requireNoReserve(flags);
-        requireOwnerThread();
         int bits = LmdbFlag.toBits(flags);
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
@@ -724,8 +703,6 @@ public final class LmdbTxn extends NativeObject {
     /// @param data  native data bytes to store (likewise not retained)
     /// @param flags the flags to write with
     /// @throws LmdbException if the write fails
-    /// @throws IllegalStateException if called from a thread other than the
-    ///                                one that began this transaction
     /// @throws IllegalArgumentException if `flags` contains [LmdbWriteFlag#RESERVE]
     public void put(LmdbDbi dbi, MemorySegment key, MemorySegment data, Set<LmdbWriteFlag> flags) {
         Objects.requireNonNull(dbi, "dbi");
@@ -733,7 +710,6 @@ public final class LmdbTxn extends NativeObject {
         NativeCall.requireNative(data, "data");
         Objects.requireNonNull(flags, "flags");
         LmdbWriteFlag.requireNoReserve(flags);
-        requireOwnerThread();
         int bits = LmdbFlag.toBits(flags);
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
@@ -763,8 +739,6 @@ public final class LmdbTxn extends NativeObject {
     ///               region — must fill all `size` bytes before returning;
     ///               the region is not valid after this call returns
     /// @throws LmdbException if the write fails
-    /// @throws IllegalStateException if called from a thread other than the
-    ///                                one that began this transaction
     /// @throws IllegalArgumentException if `size` is negative
     public void put(LmdbDbi dbi, byte[] key, int size, Consumer<MemorySegment> filler) {
         Objects.requireNonNull(dbi, "dbi");
@@ -773,7 +747,6 @@ public final class LmdbTxn extends NativeObject {
         if (size < 0) {
             throw new IllegalArgumentException("size must not be negative: " + size);
         }
-        requireOwnerThread();
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.allocate(arena);
@@ -812,12 +785,9 @@ public final class LmdbTxn extends NativeObject {
     /// @param key the key to delete
     /// @return `true` if `key` was present and deleted, `false` if it was not found
     /// @throws LmdbException if the delete fails
-    /// @throws IllegalStateException if called from a thread other than the
-    ///                                one that began this transaction
     public boolean delete(LmdbDbi dbi, byte[] key) {
         Objects.requireNonNull(dbi, "dbi");
         Objects.requireNonNull(key, "key");
-        requireOwnerThread();
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             int code;
@@ -837,12 +807,9 @@ public final class LmdbTxn extends NativeObject {
     ///            `MDB_val`; not retained after this call)
     /// @return `true` if `key` was present and deleted, `false` if it was not found
     /// @throws LmdbException if the delete fails
-    /// @throws IllegalStateException if called from a thread other than the
-    ///                                one that began this transaction
     public boolean delete(LmdbDbi dbi, MemorySegment key) {
         Objects.requireNonNull(dbi, "dbi");
         NativeCall.requireNative(key, "key");
-        requireOwnerThread();
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             int code;
@@ -874,13 +841,10 @@ public final class LmdbTxn extends NativeObject {
     /// @param data the specific duplicate value to delete
     /// @return `true` if the pair was present and deleted, `false` if it was not found
     /// @throws LmdbException if the delete fails
-    /// @throws IllegalStateException if called from a thread other than the
-    ///                                one that began this transaction
     public boolean delete(LmdbDbi dbi, byte[] key, byte[] data) {
         Objects.requireNonNull(dbi, "dbi");
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(data, "data");
-        requireOwnerThread();
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.of(arena, data);
@@ -901,13 +865,10 @@ public final class LmdbTxn extends NativeObject {
     /// @param data native data bytes identifying the duplicate (likewise not retained)
     /// @return `true` if the pair was present and deleted, `false` if it was not found
     /// @throws LmdbException if the delete fails
-    /// @throws IllegalStateException if called from a thread other than the
-    ///                                one that began this transaction
     public boolean delete(LmdbDbi dbi, MemorySegment key, MemorySegment data) {
         Objects.requireNonNull(dbi, "dbi");
         NativeCall.requireNative(key, "key");
         NativeCall.requireNative(data, "data");
-        requireOwnerThread();
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(arena, key);
             MemorySegment dataVal = LmdbVal.of(arena, data);

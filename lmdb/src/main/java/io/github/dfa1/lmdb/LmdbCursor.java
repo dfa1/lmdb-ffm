@@ -30,7 +30,16 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 /// native memory rather than crash (calling `mdb_cursor_close` on it
 /// touches the ended transaction's own already-freed handle either way,
 /// regardless of the cursor's own memory ever being freed). Renew it onto a
-/// live transaction before closing to avoid that leak. Not thread-safe.
+/// live transaction before closing to avoid that leak.
+///
+/// **Confined to the thread that opened it — use it from no other thread.**
+/// Same hard requirement as [LmdbTxn] (LMDB ties a cursor's confinement to
+/// its transaction's), and enforced no more than [LmdbTxn]'s is: reading
+/// happens to throw `WrongThreadException` from the wrong thread, since
+/// [#keyVal]/[#dataVal] live in a confined `Arena`, but writing
+/// ([#put(byte[], byte[], Set)] and its siblings) has no such incidental
+/// guard and is simply undefined behavior cross-thread, exactly like the
+/// rest of this binding's non-thread-safe types.
 ///
 /// {@snippet :
 /// try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
