@@ -3,6 +3,8 @@ package io.github.dfa1.lmdb;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
@@ -46,9 +48,29 @@ public final class LmdbTxn extends NativeObject {
     private final MemorySegment dataVal = LmdbVal.allocate(arena);
     private MemorySegment keyBuffer;
 
-    private LmdbTxn(MemorySegment ptr, LmdbEnv env) {
+    // Whether this transaction was begun with MDB_RDONLY — read only by
+    // #stillOpenCursorsIfWriteTransaction, to decide whether a cursor left
+    // open when this transaction ends is a caller mistake worth reporting
+    // (write only) or the documented, intended renew-later pattern
+    // (read-only) — see that method.
+    private final boolean readOnly;
+
+    // Cursors currently open on this transaction: added when a LmdbCursor is
+    // constructed against it (LmdbCursor's own constructor) or
+    // LmdbCursor#renew(LmdbTxn)'d onto it, removed when one closes or renews
+    // onto a different transaction. Read only by
+    // #stillOpenCursorsIfWriteTransaction, at commit/abort/tryClose, purely
+    // to decide what to report — LmdbCursor#tryClose and its own
+    // requireTransactionNotEnded guard are what actually keep a stale cursor
+    // from touching freed native state, regardless of what this transaction
+    // does with the set. Not synchronized: LmdbTxn (like LmdbCursor) is
+    // documented not-thread-safe.
+    private final Set<LmdbCursor> openCursors = new HashSet<>();
+
+    private LmdbTxn(MemorySegment ptr, LmdbEnv env, boolean readOnly) {
         super(ptr);
         this.env = env;
+        this.readOnly = readOnly;
         env.registerTransaction();
     }
 
@@ -63,8 +85,46 @@ public final class LmdbTxn extends NativeObject {
                 throw NativeCall.rethrow(t);
             }
             NativeCall.check(code);
-            return new LmdbTxn(out.get(ADDRESS, 0), env);
+            boolean readOnly = (flags & LmdbEnvFlag.RDONLY.bits()) != 0;
+            return new LmdbTxn(out.get(ADDRESS, 0), env, readOnly);
         }
+    }
+
+    /// Registers a cursor as open against this transaction — called once a
+    /// new [LmdbCursor] is constructed against it, or
+    /// [LmdbCursor#renew(LmdbTxn)]'d onto it. See #openCursors.
+    void registerCursor(LmdbCursor cursor) {
+        openCursors.add(cursor);
+    }
+
+    /// Unregisters a cursor that just closed, or renewed onto a different
+    /// transaction. See #openCursors.
+    void unregisterCursor(LmdbCursor cursor) {
+        openCursors.remove(cursor);
+    }
+
+    // Called from commit()/abort()/tryClose(), purely to decide what to
+    // report — not to act on any cursor. Closing (LmdbCursor#tryClose) and
+    // using (LmdbCursor#requireTransactionNotEnded) a cursor whose
+    // transaction has ended both already refuse to touch native state on
+    // their own, for a write or a read-only transaction alike: empirically,
+    // mdb_cursor_close itself dereferences the ended transaction's own freed
+    // handle even for a cursor LMDB never freed (a read-only transaction's),
+    // so "closed explicitly, before or after its transaction ends" — the doc
+    // on mdb_cursor_open — turns out to mean after a LmdbCursor#renew(LmdbTxn)
+    // onto a live one, not directly; see dfa1/lmdb-ffm#4 for the repro this
+    // was verified against. What differs between write and read-only is only
+    // whether leaving a cursor open here is a *mistake*: a write
+    // transaction's cursors are meant to be closed before it ends (LMDB
+    // frees them as a side effect either way — "only write-transactions free
+    // cursors" per mdb_txn_commit/mdb_txn_abort's own docs), so leftover ones
+    // are reported via LmdbContractException; a read-only transaction's are
+    // not freed, and deferring their close or renewing them onto a fresh
+    // transaction later is the documented, intended pattern, not a mistake.
+    private List<LmdbCursor> stillOpenCursorsIfWriteTransaction() {
+        List<LmdbCursor> stillOpen = readOnly || openCursors.isEmpty() ? List.of() : List.copyOf(openCursors);
+        openCursors.clear();
+        return stillOpen;
     }
 
     /// Prepares this transaction for a two-phase commit protocol: persists
@@ -98,6 +158,7 @@ public final class LmdbTxn extends NativeObject {
     /// @throws IllegalStateException if this transaction already ended
     public void commit() {
         MemorySegment p = take();
+        List<LmdbCursor> stillOpen;
         try {
             int code;
             try {
@@ -107,8 +168,16 @@ public final class LmdbTxn extends NativeObject {
             }
             NativeCall.check(code);
         } finally {
+            stillOpen = stillOpenCursorsIfWriteTransaction();
             env.unregisterTransaction();
             arena.close();
+        }
+        if (!stillOpen.isEmpty()) {
+            throw new LmdbContractException(
+                    "LmdbTxn#commit() called with " + stillOpen.size() + " LmdbCursor still open; "
+                            + "mdb_txn_commit frees a write transaction's cursors as a side effect, "
+                            + "so using or closing any of them further is no longer safe. Close "
+                            + "every cursor before committing its transaction.");
         }
     }
 
@@ -119,6 +188,7 @@ public final class LmdbTxn extends NativeObject {
     /// @throws IllegalStateException if this transaction already ended
     public void abort() {
         MemorySegment p = take();
+        List<LmdbCursor> stillOpen;
         try {
             try {
                 Bindings.TXN_ABORT.invokeExact(p);
@@ -126,8 +196,17 @@ public final class LmdbTxn extends NativeObject {
                 throw NativeCall.rethrow(t);
             }
         } finally {
+            stillOpen = stillOpenCursorsIfWriteTransaction();
             env.unregisterTransaction();
             arena.close();
+        }
+        if (!stillOpen.isEmpty()) {
+            throw new LmdbContractException(
+                    "LmdbTxn#abort() called with " + stillOpen.size() + " LmdbCursor still open on "
+                            + "a write transaction; mdb_txn_abort frees a write transaction's "
+                            + "cursors as a side effect, so using or closing any of them further is "
+                            + "no longer safe. Close every cursor before aborting its write "
+                            + "transaction.");
         }
     }
 
@@ -827,11 +906,21 @@ public final class LmdbTxn extends NativeObject {
 
     @Override
     protected void tryClose(MemorySegment ptr) throws Throwable {
+        List<LmdbCursor> stillOpen;
         try {
             Bindings.TXN_ABORT.invokeExact(ptr);
         } finally {
+            stillOpen = stillOpenCursorsIfWriteTransaction();
             env.unregisterTransaction();
             arena.close();
+        }
+        if (!stillOpen.isEmpty()) {
+            throw new LmdbContractException(
+                    "LmdbTxn#close() called with " + stillOpen.size() + " LmdbCursor still open on "
+                            + "a write transaction; aborting it (the try-with-resources safety net) "
+                            + "frees those cursors as a side effect, so using or closing any of them "
+                            + "further is no longer safe. Close every cursor before its write "
+                            + "transaction ends.");
         }
     }
 }

@@ -1,5 +1,6 @@
 package io.github.dfa1.lmdb;
 
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -18,6 +19,8 @@ import java.util.Set;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class LmdbCursorTest {
 
@@ -584,6 +587,158 @@ class LmdbCursorTest {
 
         private static LmdbComparator byLengthComparator() {
             return (a, b) -> Long.compare(a.byteSize(), b.byteSize());
+        }
+    }
+
+    @Nested
+    class Lifecycle {
+
+        @Test
+        void commitWithAnOpenCursorOnAWriteTransactionThrows() {
+            // Given a write transaction with a cursor still open on it
+            LmdbTxn txn = env.beginTxn();
+            LmdbDbi dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+            LmdbCursor cursor = txn.openCursor(dbi);
+            cursor.put(bytes("k"), bytes("v"), Set.of());
+
+            // When the transaction is committed without closing that cursor
+            ThrowingCallable commitIt = txn::commit;
+
+            // Then it reports the contract violation loudly — mdb_txn_commit
+            // frees a write transaction's cursors as a side effect, so this
+            // could not otherwise be caught before the next use segfaults
+            assertThatThrownBy(commitIt)
+                    .isInstanceOf(LmdbContractException.class)
+                    .hasMessageContaining("1")
+                    .hasMessageContaining("LmdbCursor");
+
+            // And the write was still committed — the exception reports a
+            // caller mistake, it doesn't undo already-persisted work
+            try (LmdbTxn verify = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                assertThat(verify.get(dbi, bytes("k"))).isEqualTo(bytes("v"));
+            }
+
+            // And the cursor itself is now safely inert: using or closing it
+            // touches no freed native memory
+            assertThatThrownBy(() -> cursor.get(LmdbCursorOp.FIRST))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThatCode(cursor::close).doesNotThrowAnyException();
+        }
+
+        @Test
+        void abortWithAnOpenCursorOnAWriteTransactionThrows() {
+            // Given a write transaction with a cursor still open on it
+            LmdbTxn txn = env.beginTxn();
+            LmdbDbi dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+            LmdbCursor cursor = txn.openCursor(dbi);
+
+            // When the transaction is aborted without closing that cursor
+            ThrowingCallable abortIt = txn::abort;
+
+            // Then it reports the contract violation the same way commit() does
+            assertThatThrownBy(abortIt).isInstanceOf(LmdbContractException.class);
+
+            // And the cursor itself is now safely inert
+            assertThatThrownBy(() -> cursor.get(LmdbCursorOp.FIRST))
+                    .isInstanceOf(IllegalStateException.class);
+            assertThatCode(cursor::close).doesNotThrowAnyException();
+        }
+
+        @Test
+        void plainTryWithResourcesOnAWriteTransactionThrowsInsteadOfCrashing() {
+            // Given the exact shape a caller would naturally write: a cursor
+            // declared after its transaction, so try-with-resources closes it
+            // — in reverse order — only after the transaction already committed
+            LmdbDbi dbi;
+            try (LmdbTxn setup = env.beginTxn()) {
+                dbi = setup.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                setup.commit();
+            }
+
+            // When that shape runs
+            ThrowingCallable result = () -> {
+                try (LmdbTxn txn = env.beginTxn();
+                        LmdbCursor cursor = txn.openCursor(dbi)) {
+                    cursor.put(bytes("new"), bytes("value"), Set.of());
+                    txn.commit();
+                }
+            };
+
+            // Then it reports the contract violation instead of segfaulting on
+            // the cursor's own close() (dfa1/lmdb-ffm#4)
+            assertThatThrownBy(result).isInstanceOf(LmdbContractException.class);
+        }
+
+        @Test
+        void usingACursorAfterItsReadOnlyTransactionAbortsFailsWithoutReportingAViolation() {
+            // Given data committed, and a cursor positioned on a read-only transaction
+            LmdbDbi dbi;
+            try (LmdbTxn setup = env.beginTxn()) {
+                dbi = setup.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                setup.put(dbi, bytes("k"), bytes("v"), Set.of());
+                setup.commit();
+            }
+            LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+            LmdbCursor cursor = txn.openCursor(dbi);
+            cursor.get(LmdbCursorOp.FIRST);
+
+            // When that read-only transaction ends without closing the cursor
+            ThrowingCallable abortIt = txn::abort;
+
+            // Then abort() does not throw: leaving a read-only transaction's
+            // cursor open across its end is documented, intended usage (see
+            // the Renew tests), not a caller mistake — LMDB never frees a
+            // read-only transaction's cursors the way it frees a write
+            // transaction's
+            assertThatCode(abortIt).doesNotThrowAnyException();
+
+            // And using the cursor now fails cleanly rather than reading
+            // through the ended snapshot (SIGSEGV in mdb_cursor_sibling)
+            assertThatThrownBy(() -> cursor.get(LmdbCursorOp.NEXT))
+                    .isInstanceOf(IllegalStateException.class);
+        }
+
+        @Test
+        void closingAReadOnlyCursorDirectlyAfterItsTransactionEndedDoesNotCrash() {
+            // Given a cursor opened (and positioned) on a read-only transaction
+            // that has since ended, never renewed onto anything else
+            LmdbDbi dbi;
+            try (LmdbTxn setup = env.beginTxn()) {
+                dbi = setup.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                setup.put(dbi, bytes("k"), bytes("v"), Set.of());
+                setup.commit();
+            }
+            LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+            LmdbCursor cursor = txn.openCursor(dbi);
+            cursor.get(LmdbCursorOp.FIRST);
+            txn.abort();
+
+            // When the cursor is closed directly, without renewing it first
+            ThrowingCallable closeIt = cursor::close;
+
+            // Then it does not crash — closing it natively here would touch
+            // the transaction's own already-freed handle regardless of
+            // whether LMDB freed the cursor's own memory (it did not, for a
+            // read-only transaction), so the native close is skipped and the
+            // small amount of cursor memory leaks instead (dfa1/lmdb-ffm#4);
+            // renewing onto a live transaction before closing avoids that
+            assertThatCode(closeIt).doesNotThrowAnyException();
+        }
+
+        @Test
+        void closingEveryCursorBeforeCommitNeedsNoSpecialHandling() {
+            // Given a write transaction whose cursor is closed before committing
+            LmdbTxn txn = env.beginTxn();
+            LmdbDbi dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+            LmdbCursor cursor = txn.openCursor(dbi);
+            cursor.put(bytes("k"), bytes("v"), Set.of());
+            cursor.close();
+
+            // When the transaction is committed
+            ThrowingCallable commitIt = txn::commit;
+
+            // Then it commits cleanly, exactly as when no cursor was ever opened
+            assertThatCode(commitIt).doesNotThrowAnyException();
         }
     }
 

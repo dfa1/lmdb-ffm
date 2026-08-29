@@ -50,6 +50,16 @@ public abstract class NativeObject implements AutoCloseable {
         }
     }
 
+    /// Whether this object has already been closed (or its pointer otherwise
+    /// taken) — a non-throwing peek, unlike [#ptr()]. For a related object
+    /// that needs to check this one's live/closed state without touching or
+    /// taking ownership of its pointer itself.
+    ///
+    /// @return `true` if this object is closed
+    protected final boolean isClosed() {
+        return MemorySegment.NULL.equals(ptr.get());
+    }
+
     /// Atomically takes ownership of the live pointer away from this object,
     /// for a subclass whose terminal operation is not [#tryClose] itself but
     /// still must run exactly once — e.g. a transaction's `commit`, distinct

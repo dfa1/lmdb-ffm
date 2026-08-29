@@ -12,14 +12,25 @@ import static java.lang.foreign.ValueLayout.JAVA_LONG;
 
 /// A cursor for navigating a database within a transaction — wraps `MDB_cursor*`.
 ///
-/// A cursor is confined to the [LmdbTxn] it was opened in. **Close every
-/// cursor before calling [LmdbTxn#commit()]** on that transaction: LMDB frees
-/// a write transaction's cursors as part of the commit itself, so closing (or
-/// using) one afterward touches already-freed native memory — undefined
-/// behavior, not a catchable exception. Closing before [LmdbTxn#abort()] (or
-/// letting [LmdbTxn#close()] abort as the try-with-resources fallback) is
-/// always safe, which is why the snippet below nests a read-only transaction
-/// and its cursor in one `try`. Not thread-safe.
+/// A cursor is confined to the [LmdbTxn] it was opened in, and its lifetime
+/// nests inside that transaction's. **Close every cursor before ending its
+/// write transaction**: LMDB frees a write transaction's cursors as a side
+/// effect of ending it (`mdb_txn_commit`/`mdb_txn_abort`), so ending the
+/// transaction with one still open throws [LmdbContractException] to report
+/// it — once whatever writes were pending have already been committed or
+/// discarded — and the cursor itself becomes safely inert: any further
+/// positional use of it throws [IllegalStateException], and closing it
+/// becomes a harmless no-op rather than touching already-freed native
+/// memory. A cursor opened on a *read-only* transaction is not reported this
+/// way — LMDB does not free those, and leaving one open across the
+/// transaction's end to [#renew(LmdbTxn)] it onto a fresh one is the
+/// documented, intended pattern — but it still becomes unsafe to use or
+/// close *directly*: positional use throws the same
+/// [IllegalStateException], and closing it without renewing first leaks its
+/// native memory rather than crash (calling `mdb_cursor_close` on it
+/// touches the ended transaction's own already-freed handle either way,
+/// regardless of the cursor's own memory ever being freed). Renew it onto a
+/// live transaction before closing to avoid that leak. Not thread-safe.
 ///
 /// {@snippet :
 /// try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
@@ -69,6 +80,7 @@ public final class LmdbCursor extends NativeObject {
         super(ptr);
         this.txn = txn;
         this.dbi = dbi;
+        txn.registerCursor(this);
     }
 
     static LmdbCursor open(LmdbTxn txn, LmdbDbi dbi) {
@@ -121,6 +133,8 @@ public final class LmdbCursor extends NativeObject {
             throw NativeCall.rethrow(t);
         }
         NativeCall.check(code);
+        this.txn.unregisterCursor(this);
+        txn.registerCursor(this);
         this.txn = txn;
     }
 
@@ -251,6 +265,7 @@ public final class LmdbCursor extends NativeObject {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(data, "data");
         Objects.requireNonNull(flags, "flags");
+        requireTransactionNotEnded();
         int bits = LmdbFlag.toBits(flags);
         try (Arena scratch = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(scratch, key);
@@ -275,6 +290,7 @@ public final class LmdbCursor extends NativeObject {
         NativeCall.requireNative(key, "key");
         NativeCall.requireNative(data, "data");
         Objects.requireNonNull(flags, "flags");
+        requireTransactionNotEnded();
         int bits = LmdbFlag.toBits(flags);
         try (Arena scratch = Arena.ofConfined()) {
             MemorySegment keyVal = LmdbVal.of(scratch, key);
@@ -307,6 +323,7 @@ public final class LmdbCursor extends NativeObject {
     ///
     /// @throws LmdbException if the delete fails
     public void delete() {
+        requireTransactionNotEnded();
         int code;
         try {
             code = (int) Bindings.CURSOR_DEL.invokeExact(ptr(), 0);
@@ -322,6 +339,7 @@ public final class LmdbCursor extends NativeObject {
     /// @return the duplicate count at the current position
     /// @throws LmdbException if the native call fails
     public long count() {
+        requireTransactionNotEnded();
         try (Arena scratch = Arena.ofConfined()) {
             MemorySegment countPtr = scratch.allocate(JAVA_LONG);
             int code;
@@ -344,6 +362,7 @@ public final class LmdbCursor extends NativeObject {
     /// @return `true` if the current entry is itself a named database
     /// @throws LmdbException if the native call fails
     public boolean isDb() {
+        requireTransactionNotEnded();
         int result;
         try {
             result = (int) Bindings.CURSOR_IS_DB.invokeExact(ptr());
@@ -361,6 +380,7 @@ public final class LmdbCursor extends NativeObject {
     // Bindings#CURSOR_GET_CRITICAL for why a custom comparator rules the
     // critical handle out.
     private boolean cursorGet(LmdbCursorOp op) {
+        requireTransactionNotEnded();
         int code;
         try {
             if (txn.env().usesComparators()) {
@@ -374,11 +394,40 @@ public final class LmdbCursor extends NativeObject {
         return NativeCall.checkFound(code);
     }
 
+    // Guards every operation except #close()/#renew(LmdbTxn) against a
+    // cursor whose transaction has since ended. Checked live against the
+    // current txn's own NativeObject#isClosed() rather than a flag this
+    // cursor tracks itself, so it needs no separate bookkeeping to stay in
+    // sync — a positional operation on a stale cursor reads through an ended
+    // snapshot regardless of whether LMDB actually freed the cursor's own
+    // memory (see #tryClose for that distinction), and either way is
+    // undefined — SIGSEGV in mdb_cursor_sibling, dfa1/lmdb-ffm#4.
+    private void requireTransactionNotEnded() {
+        if (txn.isClosed()) {
+            throw new IllegalStateException(
+                    "cursor's transaction has ended; renew it onto a live one before further use");
+        }
+    }
+
     @Override
     protected void tryClose(MemorySegment ptr) throws Throwable {
         try {
-            Bindings.CURSOR_CLOSE.invokeExact(ptr);
+            // Skip mdb_cursor_close if this cursor's transaction has already
+            // ended: empirically, closing directly (without a
+            // #renew(LmdbTxn) onto a live transaction first) dereferences
+            // the ended transaction's own already-freed handle and segfaults
+            // — true even for a read-only transaction's cursor, whose own
+            // memory LMDB left untouched (dfa1/lmdb-ffm#4's repro; contrary
+            // to mdb_cursor_open's own doc, which reads as if closing
+            // directly were always safe). The cursor's native memory leaks
+            // in that case rather than risk the crash — bounded, and only
+            // under this misuse; renewing it onto a live transaction before
+            // closing avoids the leak entirely.
+            if (!txn.isClosed()) {
+                Bindings.CURSOR_CLOSE.invokeExact(ptr);
+            }
         } finally {
+            txn.unregisterCursor(this);
             arena.close();
         }
     }
