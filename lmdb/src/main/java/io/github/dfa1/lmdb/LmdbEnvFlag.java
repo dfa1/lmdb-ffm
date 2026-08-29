@@ -19,7 +19,13 @@ public enum LmdbEnvFlag implements LmdbFlag {
     WRITEMAP(0x80000),
     /// With [#WRITEMAP], flush asynchronously via `msync`/`FlushViewOfFile`.
     MAPASYNC(0x100000),
-    /// Don't bind a reader lock table slot to each thread's thread-local storage.
+    /// Don't bind a reader lock table slot to each thread's thread-local
+    /// storage. In upstream LMDB this also lets a read-only transaction
+    /// migrate between threads, but [LmdbTxn] does not offer that: its
+    /// reused `MDB_val` out-param slots live in an `Arena.ofConfined()` tied
+    /// to the thread that began the transaction, so a read from any other
+    /// thread still throws `WrongThreadException` regardless of this flag —
+    /// see [LmdbTxn]'s own class doc and dfa1/lmdb-ffm#10.
     NOTLS(0x200000),
     /// Don't use file locking — the caller must ensure exclusive access itself.
     NOLOCK(0x400000),

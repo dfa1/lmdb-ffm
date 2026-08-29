@@ -23,8 +23,18 @@ import static java.lang.foreign.ValueLayout.JAVA_INT;
 /// simply discarded (never committed) is the normal way to release its
 /// snapshot; a write transaction must be [#commit()]ted to keep its changes.
 ///
-/// Not thread-safe, and (per LMDB) confined to the thread that began it unless
-/// the environment was opened with [LmdbEnvFlag#NOTLS].
+/// Not thread-safe, and confined to the thread that began it — LMDB's own
+/// docs describe [LmdbEnvFlag#NOTLS] as lifting that confinement for a
+/// read-only transaction, letting it migrate between threads, but this
+/// binding does not offer that: the reused `MDB_val` out-param slots
+/// ([#keyVal]/[#dataVal]) live in an `Arena.ofConfined()` tied to whichever
+/// thread began this transaction, so every read still throws
+/// `WrongThreadException` from any other thread regardless of `NOTLS` — see
+/// that flag's own doc, and dfa1/lmdb-ffm#10. [#put(LmdbDbi, byte[], byte[],
+/// Set)] and the rest of the write path enforce the identical confinement
+/// explicitly (`IllegalStateException`, not a JDK-internal exception type),
+/// for both a write transaction (where LMDB itself gives no such
+/// confinement automatically) and a read one alike.
 ///
 /// {@snippet :
 /// try (LmdbTxn txn = env.beginTxn()) {
