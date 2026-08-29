@@ -196,18 +196,21 @@ final class Bindings {
     // --- data access ---
 
     // int mdb_get(MDB_txn *txn, MDB_dbi dbi, MDB_val *key, MDB_val *data)
-    //
-    // Linker.Option.critical(false) — same call shape and same justification
-    // as CURSOR_GET above (reads through LMDB's memory map on the hottest
-    // per-record path outside a cursor: getSegment/get/the Mapper
-    // overloads), so see that binding's comment for the measured tradeoff
-    // and the accepted cold-page-fault risk. Not extended to PUT/DEL/etc.:
-    // those touch the mmap too but weren't a diagnosed bottleneck
+    private static final FunctionDescriptor GET_DESCRIPTOR =
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS);
+    static final MethodHandle GET = NativeLibrary.lookup("mdb_get", GET_DESCRIPTOR);
+    // The critical variant of GET, usable only when no custom comparator can
+    // run underneath the call — same call shape and same justification as
+    // CURSOR_GET_CRITICAL below (reads through LMDB's memory map on the
+    // hottest per-record path outside a cursor: getSegment/get/the Mapper
+    // overloads), so see that binding's comment for the measured tradeoff,
+    // the accepted cold-page-fault risk, and the upcall rule that decides
+    // between the two at each call site. Not extended to PUT/DEL/etc.: those
+    // touch the mmap too but weren't a diagnosed bottleneck
     // (benchmark/WriteBenchmark already tracked lmdbjava within ~2-15%), so
     // there is little to gain for the same risk.
-    static final MethodHandle GET =
-            NativeLibrary.lookup("mdb_get",
-                    FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, ADDRESS, ADDRESS),
+    static final MethodHandle GET_CRITICAL =
+            NativeLibrary.lookup("mdb_get", GET_DESCRIPTOR,
                     new Linker.Option[] {Linker.Option.critical(false)});
     // int mdb_put(MDB_txn *txn, MDB_dbi dbi, MDB_val *key, MDB_val *data, unsigned int flags)
     static final MethodHandle PUT =
@@ -230,6 +233,13 @@ final class Bindings {
     static final MethodHandle CURSOR_RENEW =
             NativeLibrary.lookup("mdb_cursor_renew", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
     // int mdb_cursor_get(MDB_cursor *cursor, MDB_val *key, MDB_val *data, MDB_cursor_op op)
+    private static final FunctionDescriptor CURSOR_GET_DESCRIPTOR =
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_INT);
+    static final MethodHandle CURSOR_GET =
+            NativeLibrary.lookup("mdb_cursor_get", CURSOR_GET_DESCRIPTOR);
+    // The critical variant of CURSOR_GET, usable only when no custom
+    // comparator can run underneath the call — see the upcall rule at the
+    // end of this comment.
     //
     // Linker.Option.critical(false): every downcall normally pays a JVM
     // thread-state transition (Java -> native -> Java, with its GC-safepoint
@@ -251,11 +261,30 @@ final class Bindings {
     // LmdbEnv#mapSize. That stall would sit inside a call the JVM has been
     // told never blocks. The benchmark that justified this change can't
     // surface that risk: its whole dataset stays resident in the page cache
-    // for the run's duration. Scoped to this one binding only — not applied
-    // to GET/PUT/etc. — since it is the only one actually measured.
-    static final MethodHandle CURSOR_GET =
-            NativeLibrary.lookup("mdb_cursor_get",
-                    FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_INT),
+    // for the run's duration. Scoped to the two read bindings only — not
+    // applied to PUT/DEL/etc. — since they are the only ones measured.
+    //
+    // THE UPCALL RULE, which is not a tradeoff but a hard precondition: the
+    // same javadoc defines a critical function as one that "does not call
+    // back into Java (e.g. using an upcall stub)". A custom LmdbComparator
+    // (LmdbTxn#setComparator/#setDupComparator) makes mdb_get and every
+    // keyed mdb_cursor_get do exactly that, from inside LMDB's B+tree
+    // search. The calling thread was never moved to _thread_in_native, so
+    // the upcall aborts the VM outright rather than merely running slowly:
+    //
+    //   # Internal Error (upcallLinker.cpp:77)
+    //   # guarantee(thread->thread_state() == _thread_in_native) failed:
+    //   #     wrong thread state for upcall
+    //
+    // So these two critical handles are never called unconditionally.
+    // LmdbEnv#usesComparators() latches on the first upcall stub built for
+    // an environment, and every read call site branches on it to pick the
+    // plain handle above instead. The branch is per-call but perfectly
+    // predicted, and each arm keeps its own direct invokeExact against a
+    // static final handle — the shape the JIT can inline — rather than
+    // selecting a handle into a local and calling through that.
+    static final MethodHandle CURSOR_GET_CRITICAL =
+            NativeLibrary.lookup("mdb_cursor_get", CURSOR_GET_DESCRIPTOR,
                     new Linker.Option[] {Linker.Option.critical(false)});
     // int mdb_cursor_put(MDB_cursor *cursor, MDB_val *key, MDB_val *data, unsigned int flags)
     static final MethodHandle CURSOR_PUT =

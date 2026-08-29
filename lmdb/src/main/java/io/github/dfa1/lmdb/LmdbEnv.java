@@ -44,6 +44,15 @@ public final class LmdbEnv extends NativeObject {
     // lifetime rather than a per-call Arena.
     private final Arena arena = Arena.ofConfined();
 
+    // Latched by #upcallStub the first time a comparator is installed, read
+    // by every read call site to pick the plain rather than the critical
+    // mdb_get/mdb_cursor_get handle — see #usesComparators(). Volatile
+    // because the transaction installing a comparator and the transactions
+    // later reading through it need not be on the same thread; a stale
+    // `false` read there would take the critical branch into an upcall and
+    // abort the VM.
+    private volatile boolean usesComparators;
+
     private LmdbEnv(MemorySegment ptr) {
         super(ptr);
     }
@@ -538,9 +547,29 @@ public final class LmdbEnv extends NativeObject {
 
     /// Builds a native upcall stub trampolining into `comparator`, kept alive
     /// for this environment's whole lifetime — see
-    /// [LmdbTxn#setComparator(LmdbDbi, LmdbComparator)].
+    /// [LmdbTxn#setComparator(LmdbDbi, LmdbComparator)]. Latches
+    /// [#usesComparators()] on, since from here on a read against this
+    /// environment may call back into Java.
     MemorySegment upcallStub(LmdbComparator comparator) {
-        return LmdbComparators.upcallStub(arena, comparator);
+        MemorySegment stub = LmdbComparators.upcallStub(arena, comparator);
+        usesComparators = true;
+        return stub;
+    }
+
+    /// Whether a custom [LmdbComparator] has ever been installed on this
+    /// environment, and so whether a read may call back into Java from
+    /// inside LMDB's B+tree search.
+    ///
+    /// Read by every read call site to choose between the plain and the
+    /// `critical` `mdb_get`/`mdb_cursor_get` handle: a `critical` downcall
+    /// that makes an upcall aborts the VM, so the plain handle is the only
+    /// safe one once a comparator exists. See [Bindings#CURSOR_GET_CRITICAL].
+    ///
+    /// One-way and never reset — `mdb_set_compare` has no uninstall, and a
+    /// comparator installed in one transaction stays live for every later
+    /// one, since LMDB keeps it on the environment.
+    boolean usesComparators() {
+        return usesComparators;
     }
 
     @Override

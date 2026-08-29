@@ -133,13 +133,7 @@ public final class LmdbCursor extends NativeObject {
     /// @throws LmdbException if the native call fails
     public Entry get(LmdbCursorOp op) {
         Objects.requireNonNull(op, "op");
-        int code;
-        try {
-            code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
-        } catch (Throwable t) {
-            throw NativeCall.rethrow(t);
-        }
-        return NativeCall.checkFound(code) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
+        return cursorGet(op) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
     }
 
     /// Positions this cursor per `op` (one that takes a key input, such as
@@ -156,13 +150,7 @@ public final class LmdbCursor extends NativeObject {
         keyBuffer = LmdbVal.growBuffer(arena, keyBuffer, Math.max(key.length, 1));
         MemorySegment.copy(key, 0, keyBuffer, JAVA_BYTE, 0, key.length);
         LmdbVal.set(keyVal, keyBuffer.asSlice(0, key.length));
-        int code;
-        try {
-            code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
-        } catch (Throwable t) {
-            throw NativeCall.rethrow(t);
-        }
-        return NativeCall.checkFound(code) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
+        return cursorGet(op) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
     }
 
     /// [#get(LmdbCursorOp, byte[])] with a zero-copy key.
@@ -176,13 +164,7 @@ public final class LmdbCursor extends NativeObject {
         Objects.requireNonNull(op, "op");
         NativeCall.requireNative(key, "key");
         LmdbVal.set(keyVal, key);
-        int code;
-        try {
-            code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
-        } catch (Throwable t) {
-            throw NativeCall.rethrow(t);
-        }
-        return NativeCall.checkFound(code) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
+        return cursorGet(op) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
     }
 
     /// [#get(LmdbCursorOp, MemorySegment)] for a direct [ByteBuffer] key. The
@@ -208,13 +190,7 @@ public final class LmdbCursor extends NativeObject {
     /// @throws LmdbException if the native call fails
     public MemorySegment getValue(LmdbCursorOp op) {
         Objects.requireNonNull(op, "op");
-        int code;
-        try {
-            code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
-        } catch (Throwable t) {
-            throw NativeCall.rethrow(t);
-        }
-        return NativeCall.checkFound(code) ? LmdbVal.data(dataVal) : null;
+        return cursorGet(op) ? LmdbVal.data(dataVal) : null;
     }
 
     /// [#get(LmdbCursorOp, byte[])], without the key-segment construction —
@@ -233,13 +209,7 @@ public final class LmdbCursor extends NativeObject {
         keyBuffer = LmdbVal.growBuffer(arena, keyBuffer, Math.max(key.length, 1));
         MemorySegment.copy(key, 0, keyBuffer, JAVA_BYTE, 0, key.length);
         LmdbVal.set(keyVal, keyBuffer.asSlice(0, key.length));
-        int code;
-        try {
-            code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
-        } catch (Throwable t) {
-            throw NativeCall.rethrow(t);
-        }
-        return NativeCall.checkFound(code) ? LmdbVal.data(dataVal) : null;
+        return cursorGet(op) ? LmdbVal.data(dataVal) : null;
     }
 
     /// [#getValue(LmdbCursorOp, byte[])] with a zero-copy key.
@@ -253,13 +223,7 @@ public final class LmdbCursor extends NativeObject {
         Objects.requireNonNull(op, "op");
         NativeCall.requireNative(key, "key");
         LmdbVal.set(keyVal, key);
-        int code;
-        try {
-            code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
-        } catch (Throwable t) {
-            throw NativeCall.rethrow(t);
-        }
-        return NativeCall.checkFound(code) ? LmdbVal.data(dataVal) : null;
+        return cursorGet(op) ? LmdbVal.data(dataVal) : null;
     }
 
     /// [#getValue(LmdbCursorOp, MemorySegment)] for a direct [ByteBuffer] key
@@ -387,6 +351,27 @@ public final class LmdbCursor extends NativeObject {
             throw NativeCall.rethrow(t);
         }
         return result != 0;
+    }
+
+    // The one place mdb_cursor_get is called: every #get/#getValue overload
+    // passes the same reused keyVal/dataVal slots and differs only in what it
+    // reads back out of them afterward. Two arms rather than one call through
+    // a selected handle, so each keeps a direct invokeExact against a static
+    // final MethodHandle — the shape the JIT inlines. See
+    // Bindings#CURSOR_GET_CRITICAL for why a custom comparator rules the
+    // critical handle out.
+    private boolean cursorGet(LmdbCursorOp op) {
+        int code;
+        try {
+            if (txn.env().usesComparators()) {
+                code = (int) Bindings.CURSOR_GET.invokeExact(ptr(), keyVal, dataVal, op.value());
+            } else {
+                code = (int) Bindings.CURSOR_GET_CRITICAL.invokeExact(ptr(), keyVal, dataVal, op.value());
+            }
+        } catch (Throwable t) {
+            throw NativeCall.rethrow(t);
+        }
+        return NativeCall.checkFound(code);
     }
 
     @Override
