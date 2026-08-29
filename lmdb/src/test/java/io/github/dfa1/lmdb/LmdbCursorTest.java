@@ -529,6 +529,64 @@ class LmdbCursorTest {
         }
     }
 
+    // A custom comparator makes a keyed cursor_get call back into Java from
+    // inside LMDB's search, which mdb_cursor_get may not be linked
+    // Linker.Option.critical for — that combination aborts the VM outright.
+    // FIRST/NEXT/LAST/PREV cannot catch a regression here: they step within
+    // an already-positioned page and never enter the comparator.
+    @Nested
+    class CustomComparator {
+
+        @Test
+        void setPositionsOnAKeyWithACustomKeyComparator() {
+            // Given a database written through a custom key comparator
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.setComparator(dbi, byLengthComparator());
+                txn.put(dbi, bytes("a"), bytes("1"), Set.of());
+                txn.put(dbi, bytes("bb"), bytes("2"), Set.of());
+                txn.commit();
+            }
+
+            // When the cursor is positioned by key, running the comparator
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                LmdbCursor.Entry entry = cursor.get(LmdbCursorOp.SET, bytes("bb"));
+
+                // Then it lands on that entry
+                assertThat(text(entry.data())).isEqualTo("2");
+            }
+        }
+
+        @Test
+        void scanningWorksWithACustomDupComparator() {
+            // Given a DUPSORT database written through a custom value comparator
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.setDupComparator(dbi, byLengthComparator());
+                txn.put(dbi, bytes("k"), bytes("1"), Set.of());
+                txn.put(dbi, bytes("k"), bytes("22"), Set.of());
+                txn.commit();
+            }
+
+            // When the key is looked up, running the comparator
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                LmdbCursor.Entry entry = cursor.get(LmdbCursorOp.SET, bytes("k"));
+
+                // Then both duplicates are reachable from there
+                assertThat(text(entry.data())).isEqualTo("1");
+                assertThat(text(cursor.get(LmdbCursorOp.NEXT_DUP).data())).isEqualTo("22");
+            }
+        }
+
+        private static LmdbComparator byLengthComparator() {
+            return (a, b) -> Long.compare(a.byteSize(), b.byteSize());
+        }
+    }
+
     private static byte[] bytes(String s) {
         return s.getBytes(StandardCharsets.UTF_8);
     }

@@ -36,7 +36,8 @@ final class NativeLibrary {
     }
 
     // Lets a caller opt a specific binding into Linker.Option.critical — see
-    // Bindings#CURSOR_GET for the one binding that currently does, and why.
+    // Bindings#CURSOR_GET_CRITICAL for the two bindings that currently do,
+    // why, and when they may not be called.
     static MethodHandle lookup(String name, FunctionDescriptor fd, Linker.Option[] options) {
         return LINKER.downcallHandle(
                 LIB.find(name).orElseThrow(() ->

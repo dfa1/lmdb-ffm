@@ -98,9 +98,12 @@ Built `.dylib`/`.so`/`.dll` are git-ignored; they are regenerated from the submo
   per-call `Arena` — key *and* data content both vary by call there, and the
   write path wasn't the diagnosed bottleneck (`benchmark/WriteBenchmark`
   already tracked lmdbjava within ~2–15%).
-- `Bindings#CURSOR_GET` and `#GET` (only — not `PUT`/`DEL`/any other binding)
-  link with `Linker.Option.critical(false)`, skipping the JVM's thread-state
-  transition normally paid around every downcall. `benchmark/ReadBenchmark`'s
+- `Bindings#CURSOR_GET_CRITICAL` and `#GET_CRITICAL` (only — not `PUT`/`DEL`/
+  any other binding) link with `Linker.Option.critical(false)`, skipping the
+  JVM's thread-state transition normally paid around every downcall. Each is
+  a second handle on a symbol also linked plainly (`#CURSOR_GET`, `#GET`),
+  because the critical one is not always usable — see the upcall rule at the
+  end of this bullet. `benchmark/ReadBenchmark`'s
   `readSeq`/`readRev` (`mdb_cursor_get` in a tight loop, `CURSOR_GET`'s
   hottest caller) showed that transition — not the ~40 B/op `MemorySegment`
   `LmdbVal.data()` allocates per read — was the dominant cost versus
@@ -130,6 +133,28 @@ Built `.dylib`/`.so`/`.dll` are git-ignored; they are regenerated from the submo
   often enough to matter or, worse, can genuinely run long by design (a
   writer-mutex wait, an `fsync`, a full-tree stat walk) — `critical` there
   would violate its own precondition routinely, not just on a cold page.
+  THE UPCALL RULE is the other half of `critical`'s contract, and unlike the
+  page-fault risk above it is not a tradeoff to accept but a hard
+  precondition: the same javadoc defines a critical function as one that
+  "does not call back into Java (e.g. using an upcall stub)". A custom
+  `LmdbComparator` (`LmdbTxn#setComparator`/`#setDupComparator`) makes
+  `mdb_get` and every keyed `mdb_cursor_get` do exactly that, from inside
+  LMDB's B+tree search, and since the calling thread was never moved to
+  `_thread_in_native` the upcall aborts the VM outright —
+  `guarantee(thread->thread_state() == _thread_in_native) failed: wrong
+  thread state for upcall` (`upcallLinker.cpp:77`), 100% reproducible on the
+  first comparison-driven read. So the critical handles are never called
+  unconditionally: `LmdbEnv#usesComparators()` latches on the first upcall
+  stub built for an environment, and `LmdbTxn#getInto`/`LmdbCursor#cursorGet`
+  — the single call site each — branch on it to pick the plain handle
+  instead. The branch is per-call but perfectly predicted, and each arm keeps
+  its own direct `invokeExact` against a `static final` handle (the shape the
+  JIT inlines) rather than selecting a handle into a local and calling
+  through that. Cursor `FIRST`/`NEXT`/`LAST`/`PREV` never enter a comparator
+  — they step within an already-positioned page — so any test that installs a
+  comparator and then only iterates will pass while the keyed paths crash;
+  `LmdbTxnTest`/`LmdbCursorTest`'s `CustomComparator` groups cover the keyed
+  reads for exactly that reason.
 - All native handles live in `Bindings`; `size_t` maps to `JAVA_LONG` (LP64).
   LMDB return codes are `int`: `0` (`MDB_SUCCESS`) or an error — positive
   values are `errno` codes, negative values are LMDB's own `MDB_*` codes.

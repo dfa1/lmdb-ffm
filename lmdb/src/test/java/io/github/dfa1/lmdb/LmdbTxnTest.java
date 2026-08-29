@@ -3,9 +3,13 @@ package io.github.dfa1.lmdb;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -15,6 +19,8 @@ import java.nio.file.Path;
 import java.util.EnumSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiFunction;
+import java.util.stream.Stream;
 
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -770,6 +776,69 @@ class LmdbTxnTest {
     @Nested
     class CustomComparator {
 
+        // A custom comparator turns every keyed read into an upcall from
+        // inside LMDB's B+tree search, which mdb_get may not be linked
+        // Linker.Option.critical for — that combination aborts the VM
+        // (upcallLinker.cpp's "wrong thread state for upcall" guarantee), so
+        // a regression here fails the build by killing the surefire fork
+        // rather than by a failed assertion. Cursor FIRST/NEXT (covered by
+        // setComparatorChangesKeyIterationOrder below) cannot catch it:
+        // those steps compare nothing, so they never enter the comparator.
+        @ParameterizedTest
+        @MethodSource("keyedReads")
+        void everyKeyedReadFlavorWorksWithACustomComparator(
+                BiFunction<LmdbTxn, LmdbDbi, String> read) {
+            // Given a database written through a custom key comparator
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.setComparator(dbi, reverseByteComparator());
+                txn.put(dbi, key("a"), value("1"), Set.of());
+                txn.put(dbi, key("b"), value("2"), Set.of());
+                txn.commit();
+            }
+
+            // When a key is looked up, running the comparator inside the search
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                String found = read.apply(txn, dbi);
+
+                // Then the stored value comes back
+                assertThat(found).isEqualTo("2");
+            }
+        }
+
+        @Test
+        void setComparatorTakesTheEnvironmentOffTheCriticalReadPath() {
+            // Given an environment that has never had a comparator installed
+            assertThat(env.usesComparators()).isFalse();
+
+            // When a key comparator is installed
+            try (LmdbTxn txn = env.beginTxn()) {
+                LmdbDbi dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.setComparator(dbi, reverseByteComparator());
+                txn.commit();
+            }
+
+            // Then reads stop selecting the critical handle, which may not upcall
+            assertThat(env.usesComparators()).isTrue();
+        }
+
+        @Test
+        void setDupComparatorTakesTheEnvironmentOffTheCriticalReadPath() {
+            // Given an environment that has never had a comparator installed
+            assertThat(env.usesComparators()).isFalse();
+
+            // When a duplicate-value comparator is installed
+            try (LmdbTxn txn = env.beginTxn()) {
+                LmdbDbi dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE, LmdbDbiFlag.DUPSORT));
+                txn.setDupComparator(dbi, reverseByteComparator());
+                txn.commit();
+            }
+
+            // Then reads stop selecting the critical handle, which may not upcall
+            assertThat(env.usesComparators()).isTrue();
+        }
+
         @Test
         void setComparatorChangesKeyIterationOrder() {
             // Given a database opened with a reverse-order key comparator
@@ -882,6 +951,32 @@ class LmdbTxnTest {
                 // exception into LMDB's C code) rather than crashing the process
                 assertThatCode(result).doesNotThrowAnyException();
             }
+        }
+
+        // Every read that looks a key up, and so runs the comparator: the
+        // byte[], MemorySegment and Mapper flavors of get and getSegment.
+        private static Stream<Arguments> keyedReads() {
+            return Stream.of(
+                    named("get(byte[])",
+                            (txn, dbi) -> new String(txn.get(dbi, key("b")), StandardCharsets.UTF_8)),
+                    named("getSegment(byte[])",
+                            (txn, dbi) -> decode(txn.getSegment(dbi, key("b")))),
+                    named("get(byte[], Mapper)",
+                            (txn, dbi) -> txn.get(dbi, key("b"), LmdbTxnTest::decode)),
+                    named("getSegment(MemorySegment)", (txn, dbi) -> {
+                        try (Arena arena = Arena.ofConfined()) {
+                            return decode(txn.getSegment(dbi, nativeBytes(arena, "b")));
+                        }
+                    }),
+                    named("get(MemorySegment, Mapper)", (txn, dbi) -> {
+                        try (Arena arena = Arena.ofConfined()) {
+                            return txn.get(dbi, nativeBytes(arena, "b"), LmdbTxnTest::decode);
+                        }
+                    }));
+        }
+
+        private static Arguments named(String name, BiFunction<LmdbTxn, LmdbDbi, String> read) {
+            return Arguments.of(Named.of(name, read));
         }
     }
 

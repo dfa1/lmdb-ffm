@@ -546,10 +546,18 @@ public final class LmdbTxn extends NativeObject {
         LmdbVal.set(keyVal, keyBuffer.asSlice(0, key.length));
     }
 
+    // Two arms rather than one call through a selected handle: each keeps a
+    // direct invokeExact against a static final MethodHandle, the shape the
+    // JIT inlines. See Bindings#CURSOR_GET_CRITICAL for why a custom
+    // comparator rules the critical handle out.
     private boolean getInto(LmdbDbi dbi, MemorySegment keyVal, MemorySegment dataVal) {
         int code;
         try {
-            code = (int) Bindings.GET.invokeExact(ptr(), dbi.handle(), keyVal, dataVal);
+            if (env.usesComparators()) {
+                code = (int) Bindings.GET.invokeExact(ptr(), dbi.handle(), keyVal, dataVal);
+            } else {
+                code = (int) Bindings.GET_CRITICAL.invokeExact(ptr(), dbi.handle(), keyVal, dataVal);
+            }
         } catch (Throwable t) {
             throw NativeCall.rethrow(t);
         }
@@ -753,6 +761,13 @@ public final class LmdbTxn extends NativeObject {
     /// through `dbi`, and the exact same ordering must be used every time
     /// this database is opened, by every program that opens it.
     ///
+    /// Has a permanent cost for the whole environment, not just `dbi`: every
+    /// read now has to call back into Java from inside LMDB's B+tree search,
+    /// which rules out the faster `mdb_get`/`mdb_cursor_get` binding used
+    /// otherwise (see [LmdbEnv]). Reads stay correct either way — they simply
+    /// give up a measured 25–33% on cursor scans, and this cannot be undone,
+    /// since LMDB offers no way to uninstall a comparator.
+    ///
     /// @param dbi        the database to set the comparator for
     /// @param comparator the custom key-ordering function
     /// @throws LmdbException if the native call fails
@@ -771,7 +786,8 @@ public final class LmdbTxn extends NativeObject {
 
     /// Like [#setComparator(LmdbDbi, LmdbComparator)], but orders the
     /// multiple values stored under one key in an `MDB_DUPSORT` database
-    /// (`mdb_set_dupsort`) instead of the keys themselves.
+    /// (`mdb_set_dupsort`) instead of the keys themselves. Carries the same
+    /// environment-wide read cost described there.
     ///
     /// @param dbi        the `MDB_DUPSORT` database to set the comparator for
     /// @param comparator the custom value-ordering function
