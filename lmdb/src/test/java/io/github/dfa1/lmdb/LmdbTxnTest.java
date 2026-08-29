@@ -737,6 +737,83 @@ class LmdbTxnTest {
     }
 
     @Nested
+    class ThreadConfinement {
+
+        @Test
+        void putFromAnotherThreadFailsInsteadOfCorruptingMemory() throws InterruptedException {
+            // Given a write transaction begun on this (the test) thread
+            LmdbDbi dbi;
+            try (LmdbTxn setup = env.beginTxn()) {
+                dbi = setup.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                setup.commit();
+            }
+            try (LmdbTxn txn = env.beginTxn()) {
+                AtomicReference<Throwable> caught = new AtomicReference<>();
+
+                // When put is called from a different thread
+                Thread other = new Thread(() -> {
+                    try {
+                        txn.put(dbi, key("k"), value("v"), Set.of());
+                    } catch (Throwable t) {
+                        caught.set(t);
+                    }
+                });
+                other.start();
+                other.join();
+
+                // Then it fails fast, exactly like a cross-thread read already
+                // does via its own confined arena, rather than sailing through
+                // to native memory corruption (dfa1/lmdb-ffm#8)
+                assertThat(caught.get()).isInstanceOf(IllegalStateException.class);
+            }
+        }
+
+        @Test
+        void deleteFromAnotherThreadFails() throws InterruptedException {
+            // Given a write transaction with a committed key to delete
+            LmdbDbi dbi;
+            try (LmdbTxn setup = env.beginTxn()) {
+                dbi = setup.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                setup.put(dbi, key("k"), value("v"), Set.of());
+                setup.commit();
+            }
+            try (LmdbTxn txn = env.beginTxn()) {
+                AtomicReference<Throwable> caught = new AtomicReference<>();
+
+                // When delete is called from a different thread
+                Thread other = new Thread(() -> {
+                    try {
+                        txn.delete(dbi, key("k"));
+                    } catch (Throwable t) {
+                        caught.set(t);
+                    }
+                });
+                other.start();
+                other.join();
+
+                // Then it fails fast rather than touching native memory from
+                // the wrong thread
+                assertThat(caught.get()).isInstanceOf(IllegalStateException.class);
+            }
+        }
+
+        @Test
+        void putFromTheOwningThreadStillWorks() {
+            // Given a write transaction begun on this thread
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+
+                // When put is called from that same thread
+                ThrowingCallable putIt = () -> txn.put(dbi, key("k"), value("v"), Set.of());
+
+                // Then the guard does not get in the way of ordinary use
+                assertThatCode(putIt).doesNotThrowAnyException();
+            }
+        }
+    }
+
+    @Nested
     class ResetRenewPrepare {
 
         @Test
