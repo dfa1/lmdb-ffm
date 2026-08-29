@@ -147,7 +147,7 @@ public final class LmdbCursor extends NativeObject {
     /// @throws LmdbException if the native call fails
     public Entry get(LmdbCursorOp op) {
         Objects.requireNonNull(op, "op");
-        return cursorGet(op) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
+        return cursorGet(op) ? new Entry(LmdbVal.data(keyVal, txn.arena()), LmdbVal.data(dataVal, txn.arena())) : null;
     }
 
     /// Positions this cursor per `op` (one that takes a key input, such as
@@ -164,7 +164,7 @@ public final class LmdbCursor extends NativeObject {
         keyBuffer = LmdbVal.growBuffer(arena, keyBuffer, Math.max(key.length, 1));
         MemorySegment.copy(key, 0, keyBuffer, JAVA_BYTE, 0, key.length);
         LmdbVal.set(keyVal, keyBuffer.asSlice(0, key.length));
-        return cursorGet(op) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
+        return cursorGet(op) ? new Entry(LmdbVal.data(keyVal, txn.arena()), LmdbVal.data(dataVal, txn.arena())) : null;
     }
 
     /// [#get(LmdbCursorOp, byte[])] with a zero-copy key.
@@ -178,7 +178,7 @@ public final class LmdbCursor extends NativeObject {
         Objects.requireNonNull(op, "op");
         NativeCall.requireNative(key, "key");
         LmdbVal.set(keyVal, key);
-        return cursorGet(op) ? new Entry(LmdbVal.data(keyVal), LmdbVal.data(dataVal)) : null;
+        return cursorGet(op) ? new Entry(LmdbVal.data(keyVal, txn.arena()), LmdbVal.data(dataVal, txn.arena())) : null;
     }
 
     /// [#get(LmdbCursorOp, MemorySegment)] for a direct [ByteBuffer] key. The
@@ -204,7 +204,7 @@ public final class LmdbCursor extends NativeObject {
     /// @throws LmdbException if the native call fails
     public MemorySegment getValue(LmdbCursorOp op) {
         Objects.requireNonNull(op, "op");
-        return cursorGet(op) ? LmdbVal.data(dataVal) : null;
+        return cursorGet(op) ? LmdbVal.data(dataVal, txn.arena()) : null;
     }
 
     /// [#get(LmdbCursorOp, byte[])], without the key-segment construction —
@@ -223,7 +223,7 @@ public final class LmdbCursor extends NativeObject {
         keyBuffer = LmdbVal.growBuffer(arena, keyBuffer, Math.max(key.length, 1));
         MemorySegment.copy(key, 0, keyBuffer, JAVA_BYTE, 0, key.length);
         LmdbVal.set(keyVal, keyBuffer.asSlice(0, key.length));
-        return cursorGet(op) ? LmdbVal.data(dataVal) : null;
+        return cursorGet(op) ? LmdbVal.data(dataVal, txn.arena()) : null;
     }
 
     /// [#getValue(LmdbCursorOp, byte[])] with a zero-copy key.
@@ -237,7 +237,7 @@ public final class LmdbCursor extends NativeObject {
         Objects.requireNonNull(op, "op");
         NativeCall.requireNative(key, "key");
         LmdbVal.set(keyVal, key);
-        return cursorGet(op) ? LmdbVal.data(dataVal) : null;
+        return cursorGet(op) ? LmdbVal.data(dataVal, txn.arena()) : null;
     }
 
     /// [#getValue(LmdbCursorOp, MemorySegment)] for a direct [ByteBuffer] key

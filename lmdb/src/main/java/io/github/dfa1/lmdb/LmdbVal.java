@@ -70,16 +70,37 @@ final class LmdbVal {
     }
 
     /// The `mv_data` pointer, widened to its `mv_size` byte length and marked
-    /// read-only. Zero-copy: for a value LMDB itself populated (a read
-    /// result), this segment points directly into the memory-mapped
-    /// database and is valid only until the enclosing transaction ends or
-    /// the entry is overwritten/deleted. Read-only because writing through it
-    /// would either corrupt the mmap'd file in place (with `MDB_WRITEMAP`)
-    /// or segfault the JVM (without it, since the mapping is `PROT_READ`).
+    /// read-only, with no lifetime attached beyond the pointer's own
+    /// (effectively unbounded) scope. Safe only for a transient read that is
+    /// fully consumed before the current native call returns (e.g.
+    /// [#toByteArray], or a comparator upcall's synchronous compare) — never
+    /// for a segment handed back to a caller, which must go through
+    /// [#data(MemorySegment, Arena)] instead so a stale read fails fast
+    /// rather than dereferencing memory LMDB may since have unmapped (see
+    /// dfa1/lmdb-ffm#5).
     @SuppressWarnings("restricted") // reinterpret needed: mv_data has no declared size until widened
     static MemorySegment data(MemorySegment val) {
         MemorySegment p = (MemorySegment) MV_DATA_HANDLE.get(val, 0L);
         return p.reinterpret(size(val)).asReadOnly();
+    }
+
+    /// Like [#data(MemorySegment)], but the returned segment's scope is
+    /// attached to `arena` — the owning transaction's lifetime arena, for
+    /// every zero-copy read result that escapes to a caller ([LmdbTxn]'s
+    /// `getSegment`/`get(..., Mapper)`, [LmdbCursor]'s `get`/`getValue`) —
+    /// rather than the pointer's own effectively-global scope. `arena` is
+    /// always the *transaction's* arena, even when called through a
+    /// [LmdbCursor]: closing a cursor (`mdb_cursor_close`) does not unmap
+    /// anything, so a segment a cursor handed back stays valid until the
+    /// transaction itself ends or the entry is overwritten/deleted, exactly
+    /// as documented — not until the narrower cursor object happens to
+    /// close. Once `arena` closes, further access throws
+    /// [IllegalStateException] instead of the SIGSEGV a global-scoped
+    /// segment would eventually hit.
+    @SuppressWarnings("restricted") // reinterpret needed: mv_data has no declared size until widened
+    static MemorySegment data(MemorySegment val, Arena arena) {
+        MemorySegment p = (MemorySegment) MV_DATA_HANDLE.get(val, 0L);
+        return p.reinterpret(size(val), arena, null).asReadOnly();
     }
 
     static byte[] toByteArray(MemorySegment val) {

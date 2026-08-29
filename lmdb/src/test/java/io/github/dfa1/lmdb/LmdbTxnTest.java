@@ -392,6 +392,29 @@ class LmdbTxnTest {
                         .hasMessageContaining("closed");
             }
         }
+
+        @Test
+        void aRetainedSegmentBecomesInaccessibleOnceItsTransactionEnds() {
+            // Given a value put and committed
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.put(dbi, key("k"), value("v"), Set.of());
+                txn.commit();
+            }
+
+            // When a zero-copy read view is retained past its transaction's end
+            MemorySegment dangling;
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                dangling = txn.getSegment(dbi, key("k"));
+            }
+
+            // Then its scope reports closed, and reading it throws instead of
+            // dereferencing memory the transaction may have released
+            assertThat(dangling.scope().isAlive()).isFalse();
+            ThrowingCallable result = () -> dangling.get(JAVA_BYTE, 0);
+            assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+        }
     }
 
     @Nested

@@ -740,6 +740,54 @@ class LmdbCursorTest {
             // Then it commits cleanly, exactly as when no cursor was ever opened
             assertThatCode(commitIt).doesNotThrowAnyException();
         }
+
+        @Test
+        void anEntryStaysReadableAfterItsCursorClosesAsLongAsTheTransactionIsStillOpen() {
+            // Given data committed, and a cursor positioned on a read-only transaction
+            LmdbDbi dbi;
+            try (LmdbTxn setup = env.beginTxn()) {
+                dbi = setup.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                setup.put(dbi, bytes("k"), bytes("v"), Set.of());
+                setup.commit();
+            }
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                LmdbCursor.Entry entry;
+                try (LmdbCursor cursor = txn.openCursor(dbi)) {
+                    entry = cursor.get(LmdbCursorOp.FIRST);
+                }
+                // When the cursor closes (mdb_cursor_close unmaps nothing) but
+                // the transaction that owns the mapped page stays open
+
+                // Then the entry is still readable — its lifetime follows the
+                // transaction, not the narrower cursor object (dfa1/lmdb-ffm#5)
+                assertThat(entry.key().toArray(JAVA_BYTE)).isEqualTo(bytes("k"));
+                assertThat(entry.data().toArray(JAVA_BYTE)).isEqualTo(bytes("v"));
+            }
+        }
+
+        @Test
+        void anEntryBecomesInaccessibleOnceItsTransactionEnds() {
+            // Given a value read via a cursor on a read-only transaction
+            LmdbDbi dbi;
+            try (LmdbTxn setup = env.beginTxn()) {
+                dbi = setup.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                setup.put(dbi, bytes("k"), bytes("v"), Set.of());
+                setup.commit();
+            }
+            LmdbCursor.Entry entry;
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY));
+                    LmdbCursor cursor = txn.openCursor(dbi)) {
+                entry = cursor.get(LmdbCursorOp.FIRST);
+            }
+
+            // When the entry is retained past its transaction's end
+
+            // Then its scope reports closed, and reading it throws instead of
+            // dereferencing memory the transaction may have released
+            assertThat(entry.data().scope().isAlive()).isFalse();
+            ThrowingCallable result = () -> entry.data().get(JAVA_BYTE, 0);
+            assertThatThrownBy(result).isInstanceOf(IllegalStateException.class);
+        }
     }
 
     private static byte[] bytes(String s) {

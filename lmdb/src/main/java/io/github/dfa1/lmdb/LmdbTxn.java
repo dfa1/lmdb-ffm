@@ -510,7 +510,7 @@ public final class LmdbTxn extends NativeObject {
         Objects.requireNonNull(dbi, "dbi");
         Objects.requireNonNull(key, "key");
         setKey(key);
-        return getInto(dbi, keyVal, dataVal) ? LmdbVal.data(dataVal) : null;
+        return getInto(dbi, keyVal, dataVal) ? LmdbVal.data(dataVal, arena) : null;
     }
 
     /// Zero-copy read with a zero-copy key: like [#getSegment(LmdbDbi, byte[])],
@@ -526,7 +526,7 @@ public final class LmdbTxn extends NativeObject {
         Objects.requireNonNull(dbi, "dbi");
         NativeCall.requireNative(key, "key");
         LmdbVal.set(keyVal, key);
-        return getInto(dbi, keyVal, dataVal) ? LmdbVal.data(dataVal) : null;
+        return getInto(dbi, keyVal, dataVal) ? LmdbVal.data(dataVal, arena) : null;
     }
 
     /// [#getSegment(LmdbDbi, MemorySegment)] for a direct [ByteBuffer] key.
@@ -577,7 +577,7 @@ public final class LmdbTxn extends NativeObject {
         if (!getInto(dbi, keyVal, dataVal)) {
             return null;
         }
-        return mapValue(dataVal, mapper);
+        return mapValue(dataVal, mapper, arena);
     }
 
     /// [#get(LmdbDbi, byte[], Mapper)] with a zero-copy key.
@@ -597,7 +597,7 @@ public final class LmdbTxn extends NativeObject {
         if (!getInto(dbi, keyVal, dataVal)) {
             return null;
         }
-        return mapValue(dataVal, mapper);
+        return mapValue(dataVal, mapper, arena);
     }
 
     /// [#get(LmdbDbi, byte[], Mapper)] for a direct [ByteBuffer] key — see
@@ -614,8 +614,8 @@ public final class LmdbTxn extends NativeObject {
         return get(dbi, MemorySegment.ofBuffer(key), mapper);
     }
 
-    private static <R> R mapValue(MemorySegment dataVal, Mapper<R> mapper) {
-        R result = mapper.map(LmdbVal.data(dataVal));
+    private static <R> R mapValue(MemorySegment dataVal, Mapper<R> mapper, Arena arena) {
+        R result = mapper.map(LmdbVal.data(dataVal, arena));
         return Objects.requireNonNull(result, "Mapper.map(MemorySegment) must not return null");
     }
 
@@ -902,6 +902,19 @@ public final class LmdbTxn extends NativeObject {
     /// @return the owning environment
     public LmdbEnv env() {
         return env;
+    }
+
+    /// This transaction's lifetime-scoped arena — used by [LmdbCursor] to
+    /// scope the zero-copy segments its `get`/`getValue` overloads hand back
+    /// to this transaction's lifetime, not the narrower cursor object's:
+    /// `mdb_cursor_close` doesn't unmap anything, so a segment a cursor
+    /// handed back must stay valid until the transaction itself ends or the
+    /// entry is overwritten/deleted, per [LmdbCursor.Entry]'s own doc — not
+    /// until the cursor happens to close. Fetched fresh at each call rather
+    /// than cached, since [LmdbCursor#renew(LmdbTxn)] can change which
+    /// transaction a cursor currently belongs to.
+    Arena arena() {
+        return arena;
     }
 
     @Override
