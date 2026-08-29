@@ -243,6 +243,110 @@ class LmdbTxnTest {
     }
 
     @Nested
+    class Reserve {
+
+        @Test
+        void fillerWritesAreStoredAndReadableBack() {
+            // Given a value written through the reserve-and-fill path
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                byte[] payload = value("SECRET-PLAINTEXT");
+                txn.put(dbi, key("r"), payload.length, seg -> MemorySegment.copy(payload, 0, seg, JAVA_BYTE, 0, payload.length));
+                txn.commit();
+            }
+
+            // When read back normally
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                // Then it holds exactly what the filler wrote, not zeros
+                // (dfa1/lmdb-ffm#9's repro)
+                assertThat(txn.get(dbi, key("r"))).isEqualTo(value("SECRET-PLAINTEXT"));
+            }
+        }
+
+        @Test
+        void theFillerSeesExactlyTheRequestedSize() {
+            // Given a reserve-and-fill put for a 5-byte value
+            LmdbDbi dbi;
+            AtomicReference<Long> observedSize = new AtomicReference<>();
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+
+                // When the filler runs
+                txn.put(dbi, key("r"), 5, seg -> {
+                    observedSize.set(seg.byteSize());
+                    seg.fill((byte) 0x42);
+                });
+                txn.commit();
+            }
+
+            // Then it was handed exactly the requested region, and the
+            // filled bytes were actually stored
+            assertThat(observedSize.get()).isEqualTo(5L);
+            try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
+                assertThat(txn.get(dbi, key("r"))).isEqualTo(new byte[] {0x42, 0x42, 0x42, 0x42, 0x42});
+            }
+        }
+
+        @Test
+        void negativeSizeIsRejected() {
+            // Given an open database
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+
+            // When put is called with a negative size
+            try (LmdbTxn txn = env.beginTxn()) {
+                ThrowingCallable result = () -> txn.put(dbi, key("r"), -1, seg -> { });
+
+                // Then it fails fast rather than reserving something nonsensical
+                assertThatThrownBy(result).isInstanceOf(IllegalArgumentException.class);
+            }
+        }
+
+        @Test
+        void plainPutRejectsReserveInFlagsInsteadOfDiscardingTheData() {
+            // Given an open database
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+
+            // When RESERVE is passed to the plain, data-copying put overload
+            try (LmdbTxn txn = env.beginTxn()) {
+                ThrowingCallable result = () -> txn.put(dbi, key("r"), value("SECRET-PLAINTEXT"), EnumSet.of(LmdbWriteFlag.RESERVE));
+
+                // Then it is rejected outright — mdb_put would otherwise
+                // ignore this data and silently store the reserved region
+                // unfilled instead (dfa1/lmdb-ffm#9)
+                assertThatThrownBy(result).isInstanceOf(IllegalArgumentException.class);
+            }
+        }
+
+        @Test
+        void zeroCopyPutRejectsReserveInFlagsToo() {
+            // Given an open database and a native key/data segment
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+
+            // When RESERVE is passed to the zero-copy MemorySegment put overload
+            try (LmdbTxn txn = env.beginTxn(); Arena arena = Arena.ofConfined()) {
+                ThrowingCallable result = () -> txn.put(dbi, nativeBytes(arena, "r"), nativeBytes(arena, "v"),
+                        EnumSet.of(LmdbWriteFlag.RESERVE));
+
+                // Then it is rejected the same way as the byte[] overload
+                assertThatThrownBy(result).isInstanceOf(IllegalArgumentException.class);
+            }
+        }
+    }
+
+    @Nested
     class FlagsIntrospection {
 
         @Test

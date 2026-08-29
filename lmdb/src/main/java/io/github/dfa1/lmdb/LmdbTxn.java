@@ -7,6 +7,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_BYTE;
@@ -681,11 +682,13 @@ public final class LmdbTxn extends NativeObject {
     ///                       with [LmdbWriteFlag#NOOVERWRITE])
     /// @throws IllegalStateException if called from a thread other than the
     ///                                one that began this transaction
+    /// @throws IllegalArgumentException if `flags` contains [LmdbWriteFlag#RESERVE]
     public void put(LmdbDbi dbi, byte[] key, byte[] data, Set<LmdbWriteFlag> flags) {
         Objects.requireNonNull(dbi, "dbi");
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(data, "data");
         Objects.requireNonNull(flags, "flags");
+        LmdbWriteFlag.requireNoReserve(flags);
         requireOwnerThread();
         int bits = LmdbFlag.toBits(flags);
         try (Arena arena = Arena.ofConfined()) {
@@ -713,11 +716,13 @@ public final class LmdbTxn extends NativeObject {
     /// @throws LmdbException if the write fails
     /// @throws IllegalStateException if called from a thread other than the
     ///                                one that began this transaction
+    /// @throws IllegalArgumentException if `flags` contains [LmdbWriteFlag#RESERVE]
     public void put(LmdbDbi dbi, MemorySegment key, MemorySegment data, Set<LmdbWriteFlag> flags) {
         Objects.requireNonNull(dbi, "dbi");
         NativeCall.requireNative(key, "key");
         NativeCall.requireNative(data, "data");
         Objects.requireNonNull(flags, "flags");
+        LmdbWriteFlag.requireNoReserve(flags);
         requireOwnerThread();
         int bits = LmdbFlag.toBits(flags);
         try (Arena arena = Arena.ofConfined()) {
@@ -730,6 +735,48 @@ public final class LmdbTxn extends NativeObject {
                 throw NativeCall.rethrow(t);
             }
             NativeCall.check(code);
+        }
+    }
+
+    /// Reserves `size` bytes of storage under `key` in `dbi` (`mdb_put` with
+    /// `MDB_RESERVE`) without copying any Java-side data in, then hands
+    /// `filler` the reserved, writable native region to fill directly — the
+    /// true zero-copy write path [LmdbWriteFlag#RESERVE] describes.
+    /// [#put(LmdbDbi, byte[], byte[], Set)] and its `MemorySegment` sibling
+    /// reject that flag rather than accept it and silently discard the
+    /// caller's data (see [LmdbWriteFlag#RESERVE]'s own doc).
+    ///
+    /// @param dbi    the database to write to
+    /// @param key    the key to store
+    /// @param size   the number of bytes to reserve
+    /// @param filler callback invoked once, synchronously, with the reserved
+    ///               region — must fill all `size` bytes before returning;
+    ///               the region is not valid after this call returns
+    /// @throws LmdbException if the write fails
+    /// @throws IllegalStateException if called from a thread other than the
+    ///                                one that began this transaction
+    /// @throws IllegalArgumentException if `size` is negative
+    public void put(LmdbDbi dbi, byte[] key, int size, Consumer<MemorySegment> filler) {
+        Objects.requireNonNull(dbi, "dbi");
+        Objects.requireNonNull(key, "key");
+        Objects.requireNonNull(filler, "filler");
+        if (size < 0) {
+            throw new IllegalArgumentException("size must not be negative: " + size);
+        }
+        requireOwnerThread();
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment keyVal = LmdbVal.of(arena, key);
+            MemorySegment dataVal = LmdbVal.allocate(arena);
+            LmdbVal.setSize(dataVal, size);
+            int code;
+            try {
+                code = (int) Bindings.PUT.invokeExact(ptr(), dbi.handle(), keyVal, dataVal,
+                        LmdbWriteFlag.RESERVE.bits());
+            } catch (Throwable t) {
+                throw NativeCall.rethrow(t);
+            }
+            NativeCall.check(code);
+            filler.accept(LmdbVal.reserved(dataVal, arena));
         }
     }
 

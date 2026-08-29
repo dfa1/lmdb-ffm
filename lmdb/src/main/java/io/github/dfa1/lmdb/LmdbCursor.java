@@ -261,10 +261,12 @@ public final class LmdbCursor extends NativeObject {
     /// @param data  the data to store
     /// @param flags the flags to write with, e.g. `Set.of()` for none
     /// @throws LmdbException if the write fails
+    /// @throws IllegalArgumentException if `flags` contains [LmdbWriteFlag#RESERVE]
     public void put(byte[] key, byte[] data, Set<LmdbWriteFlag> flags) {
         Objects.requireNonNull(key, "key");
         Objects.requireNonNull(data, "data");
         Objects.requireNonNull(flags, "flags");
+        LmdbWriteFlag.requireNoReserve(flags);
         requireTransactionNotEnded();
         int bits = LmdbFlag.toBits(flags);
         try (Arena scratch = Arena.ofConfined()) {
@@ -286,10 +288,12 @@ public final class LmdbCursor extends NativeObject {
     /// @param data  native data bytes to store (likewise not retained)
     /// @param flags the flags to write with
     /// @throws LmdbException if the write fails
+    /// @throws IllegalArgumentException if `flags` contains [LmdbWriteFlag#RESERVE]
     public void put(MemorySegment key, MemorySegment data, Set<LmdbWriteFlag> flags) {
         NativeCall.requireNative(key, "key");
         NativeCall.requireNative(data, "data");
         Objects.requireNonNull(flags, "flags");
+        LmdbWriteFlag.requireNoReserve(flags);
         requireTransactionNotEnded();
         int bits = LmdbFlag.toBits(flags);
         try (Arena scratch = Arena.ofConfined()) {

@@ -69,6 +69,15 @@ final class LmdbVal {
         return (long) MV_SIZE_HANDLE.get(val, 0L);
     }
 
+    /// Writes just `size` into the already-allocated MDB_val `val`'s
+    /// `mv_size` field, leaving `mv_data` untouched (already `NULL` from
+    /// [#allocate]'s zeroed allocation) — for `MDB_RESERVE`, where LMDB reads
+    /// only `mv_size` on the way in and overwrites `mv_data` on the way out
+    /// with a pointer to the space it reserved.
+    static void setSize(MemorySegment val, long size) {
+        MV_SIZE_HANDLE.set(val, 0L, size);
+    }
+
     /// The `mv_data` pointer, widened to its `mv_size` byte length and marked
     /// read-only, with no lifetime attached beyond the pointer's own
     /// (effectively unbounded) scope. Safe only for a transient read that is
@@ -101,6 +110,19 @@ final class LmdbVal {
     static MemorySegment data(MemorySegment val, Arena arena) {
         MemorySegment p = (MemorySegment) MV_DATA_HANDLE.get(val, 0L);
         return p.reinterpret(size(val), arena, null).asReadOnly();
+    }
+
+    /// The `mv_data` pointer written back by a successful `MDB_RESERVE`
+    /// write, widened to its `mv_size` byte length and left writable —
+    /// unlike [#data(MemorySegment, Arena)], since this is the one path this
+    /// binding hands back memory specifically for the caller to write into
+    /// (see [LmdbTxn#put(LmdbDbi, byte[], int, java.util.function.Consumer)]).
+    /// Scoped to `arena` like every other escaping view, so a stale
+    /// reference after the owning transaction ends fails fast.
+    @SuppressWarnings("restricted") // reinterpret needed: mv_data has no declared size until widened
+    static MemorySegment reserved(MemorySegment val, Arena arena) {
+        MemorySegment p = (MemorySegment) MV_DATA_HANDLE.get(val, 0L);
+        return p.reinterpret(size(val), arena, null);
     }
 
     static byte[] toByteArray(MemorySegment val) {

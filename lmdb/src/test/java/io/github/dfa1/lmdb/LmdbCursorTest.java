@@ -428,6 +428,26 @@ class LmdbCursorTest {
                 assertThat(cursor.count()).isEqualTo(2L);
             }
         }
+
+        @Test
+        void cursorPutRejectsReserveInFlags() {
+            // Given a database and an open write cursor
+            LmdbDbi dbi;
+            try (LmdbTxn txn = env.beginTxn()) {
+                dbi = txn.openDatabase(EnumSet.of(LmdbDbiFlag.CREATE));
+                txn.commit();
+            }
+
+            // When RESERVE is passed to the plain, data-copying cursor put
+            try (LmdbTxn txn = env.beginTxn(); LmdbCursor cursor = txn.openCursor(dbi)) {
+                ThrowingCallable result = () -> cursor.put(bytes("k"), bytes("v"), Set.of(LmdbWriteFlag.RESERVE));
+
+                // Then it is rejected outright — mdb_cursor_put would
+                // otherwise ignore this data and silently store the
+                // reserved region unfilled instead (dfa1/lmdb-ffm#9)
+                assertThatThrownBy(result).isInstanceOf(IllegalArgumentException.class);
+            }
+        }
     }
 
     @Nested
