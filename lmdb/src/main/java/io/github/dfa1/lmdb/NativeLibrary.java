@@ -45,7 +45,7 @@ final class NativeLibrary {
                 fd, options);
     }
 
-    private static String extractBundledLib() {
+    private static Path extractBundledLib() {
         String classifier = classifier();
         String ext = libExtension(classifier);
         // Load through the class loader (no leading slash), not Class#getResourceAsStream:
@@ -68,7 +68,7 @@ final class NativeLibrary {
             Files.copy(in, lib, StandardCopyOption.REPLACE_EXISTING);
             lib.toFile().deleteOnExit();
             dir.toFile().deleteOnExit();
-            return lib.toString();
+            return lib;
         } catch (IOException e) {
             throw new UnsatisfiedLinkError("Failed to extract bundled lmdb: " + e.getMessage());
         }
