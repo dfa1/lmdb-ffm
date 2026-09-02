@@ -83,6 +83,16 @@ try (LmdbTxn txn = env.beginTxn(EnumSet.of(LmdbEnvFlag.RDONLY))) {
 are already off-heap — an mmap slice, a network buffer, an arena allocation —
 with no `byte[]` bounce on either side of the call.
 
+Zero-copy writes go the other direction too: `put(LmdbDbi, byte[], int,
+Consumer<MemorySegment>)` reserves `size` bytes under a key (`MDB_RESERVE`)
+and hands the caller the reserved, writable native region to fill directly,
+with no Java-side value ever copied in.
+
+Duplicate-key databases (`MDB_DUPSORT`) get their own cursor lookups —
+`LmdbCursor#get(LmdbCursorOp.GET_BOTH, key, data)` positions on an exact
+key+data pair, `GET_BOTH_RANGE` on the first data value at or after `data`
+for that key.
+
 Custom key ordering — LMDB calls back into Java for every comparison, via a
 `Linker.upcallStub` trampoline, not just another downcall:
 
@@ -104,13 +114,17 @@ library's own module instead of the whole unnamed-module classpath.
 
 | OS | x86_64 | aarch64 |
 |---|---|---|
-| Linux | ✅ | ✅ |
-| macOS | ✅ | ✅ |
-| Windows | ✅ | ✅ (cross-compiled; not yet run on real ARM64 Windows hardware) |
+| Linux | ✅ | cross-compiled only |
+| macOS | cross-compiled only | ✅ |
+| Windows | ✅ | cross-compiled only |
 
 Every native `liblmdb` is cross-compiled hermetically from the vendored
 `third_party/lmdb` submodule with **`zig cc`** — see [CLAUDE.md](CLAUDE.md)
-for the build.
+for the build. CI (`ubuntu-latest`/`macos-latest`/`windows-latest`) only runs
+the test suite against the classifier matching its own host — `linux-x86_64`,
+`osx-aarch64`, and `windows-x86_64` — so those three are exercised on real
+hardware every build; `linux-aarch64`, `osx-x86_64`, and `windows-aarch64`
+are cross-compiled but not yet run on matching hardware in CI.
 
 ## API coverage
 
@@ -201,7 +215,7 @@ currently shipped, for a zero-choice dependency:
 <dependency>
   <groupId>io.github.dfa1.lmdb</groupId>
   <artifactId>lmdb-platform</artifactId>
-  <version>0.1</version>
+  <version>0.2</version>
 </dependency>
 ```
 
@@ -213,12 +227,12 @@ Or, for a known single target, `lmdb` plus exactly one native classifier
 <dependency>
   <groupId>io.github.dfa1.lmdb</groupId>
   <artifactId>lmdb</artifactId>
-  <version>0.1</version>
+  <version>0.2</version>
 </dependency>
 <dependency>
   <groupId>io.github.dfa1.lmdb</groupId>
   <artifactId>lmdb-native-osx-aarch64</artifactId>
-  <version>0.1</version>
+  <version>0.2</version>
   <scope>runtime</scope>
 </dependency>
 ```
