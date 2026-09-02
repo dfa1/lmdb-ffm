@@ -108,12 +108,9 @@ jobs:
       - name: Build, test and verify
         # Explicit bash: this runner's default shell is PowerShell, which
         # can't execute ./mvnw directly; Git Bash is bundled on every
-        # GitHub-hosted Windows runner. lmdb-platform depends on every
-        # classifier, so it — and the five classifiers not relevant here,
-        # which this host can't build anyway (see build-windows-aarch64-lib)
-        # — are excluded from this reactor.
+        # GitHub-hosted Windows runner. -pl restricts the reactor to just
+        # this classifier plus lmdb (-am pulls in whatever else that needs):
+        # every other native module would fail to build here (see
+        # build-windows-aarch64-lib), and lmdb-platform depends on all of them.
         shell: bash
-        run: >
-          ./mvnw -B -ntp
-          -pl '!native/osx-aarch64,!native/osx-x86_64,!native/linux-x86_64,!native/linux-aarch64,!native/windows-x86_64,!lmdb-platform'
-          verify
+        run: ./mvnw -B -ntp -pl native/windows-aarch64,lmdb -am verify
