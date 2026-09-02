@@ -114,17 +114,18 @@ library's own module instead of the whole unnamed-module classpath.
 
 | OS | x86_64 | aarch64 |
 |---|---|---|
-| Linux | ✅ | cross-compiled only |
+| Linux | ✅ | ✅ |
 | macOS | cross-compiled only | ✅ |
-| Windows | ✅ | cross-compiled only |
+| Windows | ✅ | ✅ |
 
 Every native `liblmdb` is cross-compiled hermetically from the vendored
 `third_party/lmdb` submodule with **`zig cc`** — see [CLAUDE.md](CLAUDE.md)
-for the build. CI (`ubuntu-latest`/`macos-latest`/`windows-latest`) only runs
-the test suite against the classifier matching its own host — `linux-x86_64`,
-`osx-aarch64`, and `windows-x86_64` — so those three are exercised on real
-hardware every build; `linux-aarch64`, `osx-x86_64`, and `windows-aarch64`
-are cross-compiled but not yet run on matching hardware in CI.
+for the build. CI runs the test suite on real hardware for every classifier
+except `osx-x86_64`: `ubuntu-latest`/`macos-latest`/`windows-latest` cover
+`linux-x86_64`/`osx-aarch64`/`windows-x86_64`, and `ubuntu-24.04-arm`/
+`windows-11-arm` cover `linux-aarch64`/`windows-aarch64`. `osx-x86_64` stays
+cross-compiled but untested in CI — GitHub no longer offers a free-tier
+Intel-macOS hosted runner, only paid "larger runners".
 
 ## API coverage
 
