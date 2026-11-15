@@ -565,10 +565,17 @@ public final class LmdbEnv extends NativeObject {
             // protocol (see LmdbMessageHandlers#invoke), never a genuine
             // MDB_* error code, so it is intentionally discarded rather than
             // passed to NativeCall.check.
+            // Counted like a transaction so a close() from inside handler
+            // throws LmdbContractException instead of freeing the env under
+            // mdb_reader_list (comparators and Mapper callbacks already run
+            // inside a transaction, so they are covered the same way).
+            registerTransaction();
             try {
                 int ignored = (int) Bindings.READER_LIST.invokeExact(ptr(), stub, MemorySegment.NULL);
             } catch (Throwable t) {
                 throw NativeCall.rethrow(t);
+            } finally {
+                unregisterTransaction();
             }
         }
     }

@@ -531,6 +531,26 @@ class LmdbEnvTest {
         }
 
         @Test
+        void closingTheEnvironmentFromTheHandlerThrows(@TempDir Path dir) {
+            // Given a freshly opened environment whose handler tries to close it
+            LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of());
+            List<Throwable> thrown = new ArrayList<>();
+
+            // When the handler calls close()
+            sut.listReaders(line -> {
+                try {
+                    sut.close();
+                } catch (RuntimeException e) {
+                    thrown.add(e);
+                }
+                return false;
+            });
+
+            // Then the close is refused instead of freeing the environment under mdb_reader_list
+            assertThat(thrown).hasSize(1).first().isInstanceOf(LmdbContractException.class);
+        }
+
+        @Test
         void rejectsANullHandler(@TempDir Path dir) {
             // Given an open environment
             try (LmdbEnv sut = LmdbEnv.create().mapSize(LmdbByteSize.ofMB(10)).open(dir, Set.of())) {
